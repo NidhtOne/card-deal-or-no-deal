@@ -5,6 +5,8 @@ import { resolveFromRoot } from './config/paths';
 import { DatabaseModule } from './database/database.module';
 import { HealthController } from './health/health.controller';
 import { EventsGateway } from './events/events.gateway';
+import { AuthModule } from './auth/auth.module';
+import { UserModule } from './user/user.module';
 
 /**
  * 静态托管（文档 2.1：前端构建产物由后端直接托管）：
@@ -29,7 +31,12 @@ function buildServeStaticOptions(): ServeStaticModuleOptions[] {
 }
 
 @Module({
-  imports: [ServeStaticModule.forRoot(...buildServeStaticOptions()), DatabaseModule],
+  imports: [
+    ServeStaticModule.forRoot(...buildServeStaticOptions()),
+    DatabaseModule,
+    AuthModule,
+    UserModule,
+  ],
   controllers: [HealthController],
   providers: [EventsGateway],
 })

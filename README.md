@@ -42,6 +42,16 @@ npm run dev        # 自动初始化 .env 与 JWT_SECRET，前后端并行启动
 
 生产模式：`npm run build && npm start`，由后端在 8080 端口直接托管 `web/dist` 与 `assets/`。
 
+## 端口冲突排查
+
+前后端共用仓库根 `.env` 中的 `PORT`（默认 8080，见 docs/开发文档.md 8.3；前端 Vite dev 代理同样读取该值）。
+当 8080 被占用（例如本机 Docker Desktop 占用 `127.0.0.1:8080`）时：
+
+1. 修改 `.env` 中的 `PORT` 为任意空闲端口（如 `8081`）；
+2. 重启 `npm run dev` —— 后端监听端口与前端 `/api`、`/assets`、`/ws` 代理目标同步生效，无需改动任何代码。
+
+检查端口占用：Windows `netstat -ano | findstr :8080`；macOS/Linux `lsof -i :8080`。
+
 ## 常用脚本
 
 | 命令              | 说明                                       |
@@ -60,11 +70,18 @@ server 目录内另有 `migration:generate / migration:run / migration:revert / 
 见 `.env.example`（PORT / JWT_SECRET / DATABASE_URL / STORAGE_DIR / USE_REDIS）。
 `.env` 不存在或 `JWT_SECRET` 为空时，`npm run dev` 会自动生成随机密钥写入本地 `.env`（不入库）。
 
+## 账号系统（已实现）
+
+- 注册 `/register`（用户名 4-16 位唯一、密保问题、初始赠送自动入账）并自动登录进大厅
+- 登录 `/login`（连续失败 5 次锁定 15 分钟、「记住我」Refresh 30 天）、找回密码 `/forgot-password`（密保问题重置）
+- JWT 双令牌（Access 2h + Refresh 14d，可吊销/轮换）、修改密码、账号注销（级联删除）
+- 管理员重置密码：`node scripts/reset-password.js <用户名> <新密码>`（docs/开发文档.md 3.1.1 方式②）
+
 ## TODO（后续阶段补全）
 
-- [ ] 账号系统、个人中心、设置（M1）
+- [x] 账号系统（M1 账号部分；个人中心、设置、文件上传接口仍待实现）
 - [ ] 对局核心状态机与结算（M2，含 config/tiers.json 数值填充）
 - [ ] 角色、对局页布局与动效、背景音乐（M3）
-- [ ] 签到、任务、破产保护、成就（M4，含 config/economy.json 数值填充）
-- [ ] Dockerfile / docker-compose、重置密码脚本（M5）
+- [ ] 签到、任务、破产保护、成就（M4，含 config/economy.json 其余数值填充）
+- [ ] Dockerfile / docker-compose（M5）
 - [ ] 截图、CI、LICENSE、素材授权核查（M6）
