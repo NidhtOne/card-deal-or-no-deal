@@ -1,0 +1,20 @@
+# 依赖与构建产物
+node_modules/
+dist/
+server/dist/
+web/dist/
+*.tsbuildinfo
+
+# 环境变量（含密钥，禁止入库）
+.env
+
+# 运行期生成（保留 .gitkeep 说明文件）
+data/*
+!data/.gitkeep
+storage/*
+!storage/.gitkeep
+
+# 日志与系统文件
+*.log
+.DS_Store
+Thumbs.db

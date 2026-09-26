@@ -1,0 +1,8 @@
+node_modules/
+dist/
+server/dist/
+web/dist/
+data/
+storage/
+docs/
+*.log
