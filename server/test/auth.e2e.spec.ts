@@ -216,6 +216,58 @@ describe('登录与锁定', () => {
     expect(rows[0].locked_until).toBeNull();
   });
 
+  it('锁定到期后失败计数重置为 0：再失败 4 次不锁、第 5 次锁；成功登录仍清零（3.1.2 文档外补充决策）', async () => {
+    const username = uniq('lock2');
+    await registerUser(username);
+
+    // 先触发一次锁定
+    for (let i = 0; i < 5; i++) {
+      await api('POST', '/auth/login', { username, password: 'wrong111' });
+    }
+    const locked = await dataSource.query(
+      'SELECT failed_login_attempts, locked_until FROM users WHERE username = ?',
+      [username],
+    );
+    expect(locked[0].failed_login_attempts).toBe(5);
+    expect(locked[0].locked_until).not.toBeNull();
+
+    // 模拟锁定期已过 → 失败计数重置为 0，恢复完整 5 次失败机会
+    await dataSource.query(
+      "UPDATE users SET locked_until = datetime('now', '-1 minute') WHERE username = ?",
+      [username],
+    );
+
+    // 解锁后再失败 4 次：均 401 且不触发锁定（旧语义下第 1 次失败即再锁）
+    for (let i = 0; i < 4; i++) {
+      const res = await api('POST', '/auth/login', { username, password: 'wrong111' });
+      expect(res.status).toBe(401);
+    }
+    let rows = await dataSource.query(
+      'SELECT failed_login_attempts, locked_until FROM users WHERE username = ?',
+      [username],
+    );
+    expect(rows[0].failed_login_attempts).toBe(4);
+    expect(rows[0].locked_until).toBeNull();
+
+    // 第 5 次失败触发锁定
+    const fifth = await api('POST', '/auth/login', { username, password: 'wrong111' });
+    expect(fifth.status).toBe(423);
+
+    // 再次到期后用正确密码登录成功，计数清零
+    await dataSource.query(
+      "UPDATE users SET locked_until = datetime('now', '-1 minute') WHERE username = ?",
+      [username],
+    );
+    const ok = await api('POST', '/auth/login', { username, password: VALID_PW });
+    expect(ok.status).toBe(200);
+    rows = await dataSource.query(
+      'SELECT failed_login_attempts, locked_until FROM users WHERE username = ?',
+      [username],
+    );
+    expect(rows[0].failed_login_attempts).toBe(0);
+    expect(rows[0].locked_until).toBeNull();
+  });
+
   it('「记住我」Refresh 有效期 30 天，默认 14 天', async () => {
     const username = uniq('ttl');
     await registerUser(username);

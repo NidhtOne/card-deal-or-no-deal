@@ -12,8 +12,10 @@ import { JwtService } from '@nestjs/jwt';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcryptjs';
 import { createHash, randomBytes } from 'crypto';
-import { DataSource, EntityManager, QueryFailedError, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { parseDbDate } from '../common/db-date';
+import { isUniqueViolation } from '../common/db-error';
+import { runInTransaction } from '../common/transaction';
 import { getEconomyConfig } from '../config/economy';
 import { FundFlowType } from '../entities/fund-flow.entity';
 import { RefreshToken } from '../entities/refresh-token.entity';
@@ -48,16 +50,6 @@ function normalizeSecurityAnswer(answer: string): string {
   return answer.trim().toLowerCase();
 }
 
-function isUniqueViolation(e: unknown): boolean {
-  return (
-    e instanceof QueryFailedError &&
-    (String(e.message).includes('UNIQUE constraint failed') ||
-      String((e.driverError as { code?: string } | undefined)?.code ?? '').includes(
-        'SQLITE_CONSTRAINT',
-      ))
-  );
-}
-
 @Injectable()
 export class AuthService {
   constructor(
@@ -81,7 +73,8 @@ export class AuthService {
     const securityAnswerHash = await bcrypt.hash(normalizeSecurityAnswer(dto.securityAnswer), 10);
     const initialFundsFen = getEconomyConfig().initialFundsFen;
 
-    const user = await this.dataSource.transaction(async (manager: EntityManager) => {
+    // 写事务走全局 FIFO 互斥入口（M2 起钦定：避免 better-sqlite3 并发事务嵌套 SAVEPOINT）
+    const user = await runInTransaction(this.dataSource, async (manager: EntityManager) => {
       let saved: User;
       try {
         saved = await manager.save(
@@ -142,9 +135,18 @@ export class AuthService {
       throw this.lockedException(lockedUntil);
     }
 
+    // 文档外补充决策（3.1.2 只定义「连续失败 5 次锁定 15 分钟」，未定义解锁后的计数语义）：
+    // locked_until 到期后 failed_login_attempts 重置为 0，恢复完整 5 次失败机会，
+    // 而不是「解锁后仅剩 1 次试错即再锁」。
+    let failedAttempts = user.failedLoginAttempts;
+    if (lockedUntil) {
+      failedAttempts = 0;
+      await this.users.update({ id: user.id }, { failedLoginAttempts: 0, lockedUntil: null });
+    }
+
     const ok = await bcrypt.compare(dto.password, user.passwordHash);
     if (!ok) {
-      const attempts = user.failedLoginAttempts + 1;
+      const attempts = failedAttempts + 1;
       if (attempts >= MAX_FAILED_ATTEMPTS) {
         const until = new Date(Date.now() + LOCK_DURATION_MS);
         await this.users.update(
@@ -194,7 +196,8 @@ export class AuthService {
     const accessToken = await this.jwtService.signAsync({ sub: user.id, username: user.username });
     const newRefreshToken = randomBytes(48).toString('hex');
     // 轮换：吊销旧令牌 + 签发新令牌，同事务保证一致性
-    await this.dataSource.transaction(async (manager) => {
+    // （写事务走全局 FIFO 互斥入口，见 common/transaction.ts）
+    await runInTransaction(this.dataSource, async (manager) => {
       await manager.update(RefreshToken, { id: row.id }, { revokedAt: new Date() });
       await manager.save(
         RefreshToken,
@@ -241,7 +244,7 @@ export class AuthService {
     if (!ok) throw new BadRequestException('用户不存在或密保答案错误');
 
     const passwordHash = await bcrypt.hash(dto.newPassword, 10);
-    await this.dataSource.transaction(async (manager) => {
+    await runInTransaction(this.dataSource, async (manager) => {
       await manager.update(User, { id: user.id }, { passwordHash });
       await this.revokeAllRefreshTokens(manager, user.id);
     });
