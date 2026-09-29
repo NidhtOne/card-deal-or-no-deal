@@ -18,3 +18,8 @@ storage/*
 *.log
 .DS_Store
 Thumbs.db
+
+# 测试产物与文档（不入库）
+coverage/
+/DOCS/
+/docs/
