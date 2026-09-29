@@ -9,7 +9,7 @@ dotenv.config({ path: fileURLToPath(new URL('../.env', import.meta.url)) });
 const backendPort = process.env.PORT?.trim() || '8080';
 const httpTarget = `http://localhost:${backendPort}`;
 
-// dev server 代理：/api（REST）、/assets（静态资源）、/ws（socket.io，路径 /ws/socket.io）→ 后端
+// dev server 代理：/api（REST）、/assets（内置资产）、/uploads（用户上传文件）、/ws（socket.io）→ 后端
 export default defineConfig({
   plugins: [react()],
   server: {
@@ -20,6 +20,10 @@ export default defineConfig({
         changeOrigin: true,
       },
       '/assets': {
+        target: httpTarget,
+        changeOrigin: true,
+      },
+      '/uploads': {
         target: httpTarget,
         changeOrigin: true,
       },

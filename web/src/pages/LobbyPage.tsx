@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import Layout from '../components/Layout';
 import { AuthUser, useAuthStore } from '../store/auth';
@@ -49,6 +49,26 @@ export default function LobbyPage() {
         <p className="max-w-xl text-sm leading-relaxed text-slate-500">
           大厅功能建设中：资金余额、签到、每日任务、五档场次选择与破产保护将在后续阶段上线。
         </p>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <Link
+            to="/profile"
+            className="rounded border border-slate-700 px-6 py-2 text-sm text-slate-300 hover:border-amber-400 hover:text-amber-300"
+          >
+            个人中心
+          </Link>
+          <Link
+            to="/profile/character"
+            className="rounded border border-slate-700 px-6 py-2 text-sm text-slate-300 hover:border-amber-400 hover:text-amber-300"
+          >
+            我的角色
+          </Link>
+          <Link
+            to="/settings"
+            className="rounded border border-slate-700 px-6 py-2 text-sm text-slate-300 hover:border-amber-400 hover:text-amber-300"
+          >
+            设置
+          </Link>
+        </div>
         <button
           onClick={onLogout}
           className="rounded border border-slate-700 px-6 py-2 text-sm text-slate-300 hover:border-rose-400 hover:text-rose-300"
