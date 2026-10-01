@@ -9,6 +9,7 @@ import { EventsGateway } from './events/events.gateway';
 import { AuthModule } from './auth/auth.module';
 import { MatchModule } from './match/match.module';
 import { UserModule } from './user/user.module';
+import { WalletController } from './wallet/wallet.controller';
 
 /**
  * 静态托管（文档 2.1：前端构建产物由后端直接托管）：
@@ -47,7 +48,8 @@ function buildServeStaticOptions(): ServeStaticModuleOptions[] {
     UserModule,
     MatchModule,
   ],
-  controllers: [HealthController],
+  // WalletController 挂这里而非 WalletModule：AuthModule 依赖 WalletModule，反向引入会循环依赖
+  controllers: [HealthController, WalletController],
   providers: [EventsGateway],
 })
 export class AppModule {}

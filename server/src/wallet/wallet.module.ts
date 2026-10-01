@@ -5,8 +5,8 @@ import { UserWallet } from '../entities/user-wallet.entity';
 import { WalletService } from './wallet.service';
 
 /**
- * 资金模块：本阶段仅提供事务内资金原语 WalletService（注册初始赠送使用）；
- * 6.3 经济与对局接口（GET /api/wallet 等）属下一阶段范围，不在此实现。
+ * 资金模块：事务内资金原语 WalletService（一切资金变动的唯一入口）。
+ * 6.3 的 GET /api/wallet 接口见 wallet.controller.ts（注册于 AppModule，原因见该文件注释）。
  */
 @Module({
   imports: [TypeOrmModule.forFeature([UserWallet, FundFlow])],

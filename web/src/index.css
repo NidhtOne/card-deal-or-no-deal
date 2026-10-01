@@ -1,3 +1,88 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ===== 对局动效（docs/开发文档.md 3.4/3.5） ===== */
+
+/* 翻牌：点击翻牌 → 翻转 → 展示金额（逐张错峰由页面调度 delay） */
+@keyframes flip-in {
+  0% {
+    transform: rotateY(90deg) scale(0.92);
+    opacity: 0.4;
+  }
+  100% {
+    transform: rotateY(0deg) scale(1);
+    opacity: 1;
+  }
+}
+.card-flip-in {
+  animation: flip-in 0.35s ease-out;
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+}
+
+/* 加载页 VS 脉动 */
+@keyframes vs-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  50% {
+    transform: scale(1.18);
+    opacity: 1;
+  }
+}
+.vs-pulse {
+  animation: vs-pulse 1.2s ease-in-out infinite;
+  text-shadow: 0 0 24px rgba(251, 113, 133, 0.55);
+}
+
+/* 报价传递（3.5：信封意象，银行家 → 玩家方向） */
+@keyframes envelope-fly {
+  0% {
+    transform: translateX(0) scale(0.7);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(min(38vw, 420px)) scale(1.05);
+    opacity: 0;
+  }
+}
+.envelope-fly {
+  animation: envelope-fly 1.4s ease-in-out both;
+}
+
+/* 银行家报价阶段高亮 */
+@keyframes banker-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 10px rgba(251, 191, 36, 0.25);
+  }
+  50% {
+    box-shadow: 0 0 28px rgba(251, 191, 36, 0.55);
+  }
+}
+.banker-glow {
+  animation: banker-glow 1.6s ease-in-out infinite;
+}
+
+/* 玩家操作反馈 */
+@keyframes player-act {
+  0%,
+  100% {
+    box-shadow: 0 0 8px rgba(56, 189, 248, 0.25);
+  }
+  50% {
+    box-shadow: 0 0 22px rgba(56, 189, 248, 0.5);
+  }
+}
+.player-act {
+  animation: player-act 0.9s ease-in-out infinite;
+}

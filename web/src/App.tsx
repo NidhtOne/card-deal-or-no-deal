@@ -4,14 +4,18 @@ import CharacterPage from './pages/CharacterPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import LobbyPage from './pages/LobbyPage';
 import LoginPage from './pages/LoginPage';
+import MatchLoadPage from './pages/MatchLoadPage';
+import MatchPlayPage from './pages/MatchPlayPage';
+import MatchResultPage from './pages/MatchResultPage';
 import ProfilePage from './pages/ProfilePage';
 import RegisterPage from './pages/RegisterPage';
 import SettingsPage from './pages/SettingsPage';
 
 /**
- * 路由（文档第四章）。已实现：/login、/register、/forgot-password、/lobby（占位）、
- * /profile、/profile/character、/settings。
- * 其余路由（/match/*、/history、/achievements）后续阶段补齐。
+ * 路由（文档第四章，逐字）。已实现：/login、/register、/forgot-password、/lobby、
+ * /match/load/:sessionId、/match/play/:sessionId、/match/result/:sessionId、
+ * /profile、/profile/character、/settings。全部需登录页面均有路由守卫。
+ * 其余路由（/history、/achievements）后续阶段补齐。
  */
 export default function App() {
   return (
@@ -23,6 +27,9 @@ export default function App() {
         {/* 受保护路由：未登录跳 /login */}
         <Route element={<RequireAuth />}>
           <Route path="/lobby" element={<LobbyPage />} />
+          <Route path="/match/load/:sessionId" element={<MatchLoadPage />} />
+          <Route path="/match/play/:sessionId" element={<MatchPlayPage />} />
+          <Route path="/match/result/:sessionId" element={<MatchResultPage />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/profile/character" element={<CharacterPage />} />
           <Route path="/settings" element={<SettingsPage />} />

@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && node ../scripts/clean.js dist && vite build",
     "preview": "vite preview",
-    "test": "echo \"web: no tests yet (placeholder)\""
+    "test": "vitest run"
   },
   "dependencies": {
     "axios": "^1.20.0",
@@ -28,6 +28,7 @@
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "5.5.4",
-    "vite": "^5.4.11"
+    "vite": "^5.4.11",
+    "vitest": "^2.1.9"
   }
 }
