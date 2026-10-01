@@ -8,7 +8,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthUserPayload, CurrentUser, JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { CounterDto, PickCardDto, StartMatchDto, SwapDto } from './dto/match.dto';
+import { CounterDto, FlipCardDto, PickCardDto, StartMatchDto, SwapDto } from './dto/match.dto';
 import { GameSessionService } from './game-session.service';
 
 /**
@@ -19,6 +19,16 @@ import { GameSessionService } from './game-session.service';
 @UseGuards(JwtAuthGuard)
 export class MatchController {
   constructor(private readonly sessions: GameSessionService) {}
+
+  /**
+   * 档位列表（任务书 §0：知识库未定义 —— 文档外补充，注释标注）：
+   * 大厅档位卡片数据源，只读，输出 [{ tier, name, entryFeeFen, maxPrizeFen }]，不含对局机密。
+   * 声明在 :id 参数路由之前，避免路由匹配歧义。
+   */
+  @Get('tiers')
+  tiers() {
+    return this.sessions.getTiersView();
+  }
 
   /** 传入 tier，事务内扣入场费并生成 26 张卡 */
   @Post('start')
@@ -37,10 +47,17 @@ export class MatchController {
     return { state: await this.sessions.getStateView(user.userId, id) };
   }
 
-  /** 翻开卡牌（校验轮次配额；同步生成本轮报价） */
+  /**
+   * 翻一张指定位置的公共牌（文档外补充：语义为逐张点击，缺 position → 400）。
+   * 本轮配额耗尽瞬间服务端生成该轮报价（报价唯一生成点）；重复翻已翻位置幂等返回。
+   */
   @Post(':id/flip')
-  async flip(@CurrentUser() user: AuthUserPayload, @Param('id', ParseIntPipe) id: number) {
-    await this.sessions.flip(user.userId, id);
+  async flip(
+    @CurrentUser() user: AuthUserPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: FlipCardDto,
+  ) {
+    await this.sessions.flip(user.userId, id, dto.position);
     return { state: await this.sessions.getStateView(user.userId, id) };
   }
 

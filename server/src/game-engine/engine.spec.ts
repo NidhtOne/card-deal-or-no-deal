@@ -79,9 +79,22 @@ function currentEv(state: GameSnapshot): number {
   return r.reduce((a, b) => a + b, 0) / r.length;
 }
 
+/** 逐张翻完当前轮（按牌位升序，与前端点击交互一致），返回追加事件 */
+function flipRoundByCard(game: GameEngine): GameEvent[] {
+  const events: GameEvent[] = [];
+  for (;;) {
+    const s = game.getState();
+    if (s.status !== GameStatus.FlipRound) break;
+    const p = s.poolFen.findIndex((_, i) => !s.eliminated[i] && i !== s.ownIndex);
+    if (p < 0) throw new Error('无公共牌可翻（测试辅助函数内部错误）');
+    events.push(...game.flipCardAtPosition(p));
+  }
+  return events;
+}
+
 function playToFirstOffer(game: GameEngine, pickIndex = 7): void {
   game.pickOwnCard(pickIndex);
-  game.flipCurrentRound();
+  flipRoundByCard(game);
 }
 
 /** 一路 noDeal 推进到终局报价 */
@@ -155,9 +168,9 @@ describe('engine：状态机主流程（3.6.3）', () => {
     for (let guard = 0; guard < 50; guard++) {
       const status = game.getState().status;
       if (status === GameStatus.FlipRound) {
-        const events = game.flipCurrentRound();
-        const flip = eventsOf(events, 'cards_flipped')[0];
-        flipCounts.push(flip.positions.length);
+        const events = flipRoundByCard(game);
+        const flips = eventsOf(events, 'cards_flipped');
+        flipCounts.push(flips.reduce((acc, e) => acc + e.positions.length, 0));
       } else if (status === GameStatus.BankerOffer) {
         game.respondOffer('noDeal');
       } else if (status === GameStatus.FinalOffer) {
@@ -219,8 +232,16 @@ describe('engine：状态机主流程（3.6.3）', () => {
     const game = createTestGame('cmd-events');
     const pickEvents = game.pickOwnCard(3);
     expect(pickEvents.map((e) => e.type)).toEqual(['own_card_picked']);
-    const flipEvents = game.flipCurrentRound();
-    expect(flipEvents.map((e) => e.type)).toEqual(['cards_flipped', 'offer_made']);
+    const flipEvents = flipRoundByCard(game);
+    expect(flipEvents.map((e) => e.type)).toEqual([
+      'cards_flipped',
+      'cards_flipped',
+      'cards_flipped',
+      'cards_flipped',
+      'cards_flipped',
+      'cards_flipped',
+      'offer_made',
+    ]);
     const dealEvents = game.respondOffer('deal');
     expect(dealEvents.map((e) => e.type)).toEqual(['offer_response', 'tax_calculated', 'settled']);
     // 追加语义：返回的正是事件日志的尾部切片
@@ -358,13 +379,15 @@ describe('engine：非法操作与终局换牌（3.6.6）', () => {
   it('非法状态操作一律抛 GameRuleError', () => {
     const game = createTestGame('illegal-ops');
     expect(() => game.flipCurrentRound()).toThrow(GameRuleError); // 未选底牌
+    expect(() => game.flipCardAtPosition(0)).toThrow(GameRuleError);
     expect(() => game.respondOffer('deal')).toThrow(GameRuleError);
     expect(() => game.decideSwap(true)).toThrow(GameRuleError);
     game.pickOwnCard(0);
     expect(() => game.pickOwnCard(1)).toThrow(GameRuleError); // 重复选
     expect(() => game.respondOffer('noDeal')).toThrow(GameRuleError); // 还没有报价
-    game.flipCurrentRound();
+    flipRoundByCard(game);
     expect(() => game.flipCurrentRound()).toThrow(GameRuleError); // 报价态不能翻牌
+    expect(() => game.flipCardAtPosition(1)).toThrow(GameRuleError);
     expect(() => game.decideSwap(false)).toThrow(GameRuleError);
   });
 
@@ -429,10 +452,133 @@ describe('engine：非法操作与终局换牌（3.6.6）', () => {
     game.respondOffer('deal');
     expect(() => game.pickOwnCard(0)).toThrow(GameRuleError);
     expect(() => game.flipCurrentRound()).toThrow(GameRuleError);
+    expect(() => game.flipCardAtPosition(0)).toThrow(GameRuleError);
     expect(() => game.respondOffer('deal')).toThrow(GameRuleError);
     expect(() => game.decideSwap(false)).toThrow(GameRuleError);
     expect(() => game.autoResolve()).toThrow(GameRuleError);
     expect(game.getLegalActions()).toEqual([]);
+  });
+});
+
+describe('engine：逐张翻牌与本轮配额（3.6.3，M3）', () => {
+  it('进入某轮时按配置与钳制赋值 roundFlipsRemaining，快照序列化/反序列化包含该字段', () => {
+    const game = createTestGame('quota-init');
+    game.pickOwnCard(7);
+    const st = game.getState();
+    expect(st.roundFlipsRemaining).toBe(6); // 第 1 轮配置 6
+    // JSON 往返一致
+    expect(JSON.parse(JSON.stringify(st))).toEqual(st);
+    const restored = restoreGame(st);
+    expect(restored.getState().roundFlipsRemaining).toBe(6);
+    // 心跳/报价阶段非翻牌态为 0
+    flipRoundByCard(game);
+    expect(game.getState().roundFlipsRemaining).toBe(0);
+  });
+
+  it('逐张翻：每张 roundFlipsRemaining -1、单元素 cards_flipped；配额耗尽瞬间生成报价且仅一次', () => {
+    const game = createTestGame('flip-per-card');
+    game.pickOwnCard(0);
+    for (let i = 0; i < 6; i++) {
+      const events = game.flipCardAtPosition(i + 1);
+      const flip = eventsOf(events, 'cards_flipped')[0];
+      expect(flip).toMatchObject({ round: 1, positions: [i + 1], amountsFen: [expect.any(Number)] as never });
+      const st = game.getState();
+      expect(st.roundFlipsRemaining).toBe(5 - i);
+      if (i < 5) {
+        expect(events).toHaveLength(1); // 未满配额：不发 offer_made，停留 FLIP_ROUND
+        expect(st.status).toBe(GameStatus.FlipRound);
+      } else {
+        expect(events).toHaveLength(2);
+        expect(events[1].type).toBe('offer_made'); // 配额耗尽瞬间生成报价
+        expect(st.status).toBe(GameStatus.BankerOffer);
+        expect(st.currentOffer).not.toBeNull();
+        expect(st.counterUsed).toBe(false);
+      }
+    }
+    // 事件日志全量：6 张单翻 + 仅 1 条 offer_made（报价唯一生成点）
+    const all = game.getState().events;
+    expect(eventsOf(all, 'offer_made')).toHaveLength(1);
+    expect(eventsOf(all, 'cards_flipped')).toHaveLength(6);
+    // 配额耗尽后再翻 → 状态已转移，抛错
+    expect(() => game.flipCardAtPosition(7)).toThrow(GameRuleError);
+    expect(game.getState().events.length).toBe(all.length); // 状态未被破坏
+  });
+
+  it('牌位越界/非整数/已翻/底牌位置一律抛 GameRuleError 且不产生事件、不耗配额', () => {
+    const game = createTestGame('flip-bad-pos');
+    game.pickOwnCard(3);
+    const before = game.getState().events.length;
+    for (const bad of [-1, POOL_SIZE, 2.5, Number.NaN]) {
+      expect(() => game.flipCardAtPosition(bad)).toThrow(GameRuleError);
+    }
+    expect(() => game.flipCardAtPosition(3)).toThrow(GameRuleError); // 底牌位置
+    expect(game.getState().events.length).toBe(before);
+    expect(game.getState().roundFlipsRemaining).toBe(6);
+    expect(game.getState().eliminated.filter(Boolean)).toHaveLength(0);
+    game.flipCardAtPosition(0);
+    expect(() => game.flipCardAtPosition(0)).toThrow(GameRuleError); // 已翻位置
+    expect(game.getState().events.length).toBe(before + 1);
+    expect(game.getState().roundFlipsRemaining).toBe(5);
+    expect(game.getState().status).toBe(GameStatus.FlipRound);
+  });
+
+  it('快照含 roundFlipsRemaining，restore 后半程逐张翻与不断线完全一致', () => {
+    const a = createTestGame('restore-flip-mid');
+    a.pickOwnCard(5);
+    a.flipCardAtPosition(0);
+    a.flipCardAtPosition(2);
+    const snap = JSON.parse(JSON.stringify(a.getState())) as GameSnapshot;
+    expect(snap.roundFlipsRemaining).toBe(4);
+    flipRoundByCard(a);
+    const b = restoreGame(snap);
+    expect(b.getState()).toEqual(snap); // 恢复快照原样（含 roundFlipsRemaining）
+    flipRoundByCard(b);
+    expect(JSON.stringify(b.getState().events)).toBe(JSON.stringify(a.getState().events));
+    expect(b.getState().status).toBe(a.getState().status);
+  });
+
+  it('clamp 边界：配额取满 min(configured, 公共牌-1)，翻后公共牌+底牌恰好剩 2，终局路径不受影响', () => {
+    // 注：配置校验要求 flip_sequence 之和 ≤ 24，故 quota 恰为「公共牌-1」是本约束下的钳制上界
+    const raw = makeTiersRaw();
+    raw.common.flip_sequence = [24]; // 首轮即 24 张 → 25 张公共牌翻 24 张
+    const game = createGame({
+      tierId: 'test',
+      seed: 'clamp-round',
+      tiersConfig: raw,
+      economyConfig: makeEconomyRaw(),
+    });
+    game.pickOwnCard(1);
+    expect(game.getState().roundFlipsRemaining).toBe(24); // min(24 配置, 公共牌 25 - 1)
+    let last: GameEvent[] = [];
+    for (let p = 0; p < POOL_SIZE; p++) {
+      if (p === 1 || game.getState().status !== GameStatus.FlipRound) continue;
+      last = game.flipCardAtPosition(p);
+    }
+    const st = game.getState();
+    expect(st.status).toBe(GameStatus.BankerOffer);
+    expect(eventsOf(last, 'offer_made')).toHaveLength(1);
+    expect(st.eliminated.filter(Boolean)).toHaveLength(24); // 公共牌恰好剩 1 + 底牌 1
+    game.respondOffer('noDeal');
+    expect(game.getState().status).toBe(GameStatus.FinalOffer); // 剩余 2 张 → 终极报价
+  });
+
+  it('超时托管整轮自动路径：翻牌中途接管按牌位升序补齐配额，报价仍只在配额耗尽瞬间生成一次', () => {
+    const game = createTestGame('auto-mid-round');
+    game.pickOwnCard(2);
+    game.flipCardAtPosition(0);
+    game.flipCardAtPosition(1);
+    expect(game.getState().roundFlipsRemaining).toBe(4);
+    const events = game.autoResolve();
+    const flips = eventsOf(events, 'cards_flipped');
+    // 托管在第一轮补齐剩余 4 张（牌位升序），之后整轮自动走完
+    expect(flips.slice(0, 4).map((e) => e.positions[0])).toEqual([3, 4, 5, 6]);
+    for (const f of flips) {
+      expect(f.positions).toHaveLength(1); // 逐张淘汰
+      expect(f.timeout).toBe(true);
+    }
+    const all = game.getState().events;
+    expect(eventsOf(all, 'offer_made')).toHaveLength(10); // 9 轮常规 + 1 终局，每轮报价均仅一次
+    expect(game.getState().status).toBe(GameStatus.Settle);
   });
 });
 
@@ -617,8 +763,13 @@ describe('engine：报价性质全量断言（附录 A：报价 ≤EV、≤上�
         else expect(o.phase).toBe('final');
       }
       // 翻牌节奏
-      const flips = eventsOf(state.events, 'cards_flipped').map((e) => e.positions.length);
-      expect(flips).toEqual([6, 5, 4, 3, 2, 1, 1, 1, 1]);
+      const flips = eventsOf(state.events, 'cards_flipped');
+      const byRound = new Map<number, number>();
+      for (const e of flips) byRound.set(e.round, (byRound.get(e.round) ?? 0) + e.positions.length);
+      expect(byRound.get(0)).toBeUndefined();
+      expect(
+        [...byRound.keys()].sort((a, b) => a - b).map((r) => byRound.get(r)),
+      ).toEqual([6, 5, 4, 3, 2, 1, 1, 1, 1]);
       // 税事件与 calcTaxFen 完全一致
       const taxEvent = eventsOf(state.events, 'tax_calculated')[0];
       expect(taxEvent.taxFen).toBe(calcTaxFen(taxEvent.profitFen, state.tax).taxFen);

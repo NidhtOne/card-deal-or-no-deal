@@ -233,6 +233,8 @@ export interface GameSnapshot {
   status: GameStatus;
   /** 当前轮次（1 起；未进轮次为 0；终局报价阶段保持最后一轮轮号） */
   round: number;
+  /** 本轮剩余待翻张数（仅 FLIP_ROUND_N 有意义；配额耗尽瞬间服务端生成报价一次） */
+  roundFlipsRemaining: number;
   poolFen: number[];
   ownIndex: number | null;
   /** 按牌位标记是否已淘汰，长度 26 */

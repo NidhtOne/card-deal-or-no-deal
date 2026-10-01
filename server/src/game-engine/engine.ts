@@ -50,6 +50,8 @@ type GameEventInput = DistributiveOmit<GameEvent, 'seq' | 'timeout'>;
 export class GameEngine {
   private status: GameStatus;
   private round: number;
+  /** 本轮剩余待翻张数（3.6.3 轮次配额钳制后，仅 FLIP_ROUND_N 有意义；配额耗尽瞬间生成报价） */
+  private roundFlipsRemaining: number;
   private ownIndex: number | null;
   private eliminated: boolean[];
   private counterUsed: boolean;
@@ -70,6 +72,7 @@ export class GameEngine {
   ) {
     this.status = GameStatus.PickOwnCard;
     this.round = 0;
+    this.roundFlipsRemaining = 0;
     this.ownIndex = null;
     this.eliminated = new Array(POOL_SIZE).fill(false);
     this.counterUsed = false;
@@ -143,8 +146,17 @@ export class GameEngine {
       snap.poolFen,
       createAlea('', snap.rngState),
     );
+    if (
+      typeof snap.roundFlipsRemaining !== 'number' ||
+      !Number.isInteger(snap.roundFlipsRemaining) ||
+      snap.roundFlipsRemaining < 0
+    ) {
+      // 旧持久化快照（M3 之前按整轮翻牌，无该字段）不支持恢复：直接清档重建
+      throw new GameRuleError('BAD_SNAPSHOT', '快照缺少合法 roundFlipsRemaining（旧存档需清档）');
+    }
     engine.status = snap.status;
     engine.round = snap.round;
+    engine.roundFlipsRemaining = snap.roundFlipsRemaining;
     engine.ownIndex = snap.ownIndex;
     engine.eliminated = snap.eliminated;
     engine.counterUsed = snap.counterUsed;
@@ -166,6 +178,7 @@ export class GameEngine {
       seed: this.seed,
       status: this.status,
       round: this.round,
+      roundFlipsRemaining: this.roundFlipsRemaining,
       poolFen: this.poolFen,
       ownIndex: this.ownIndex,
       eliminated: this.eliminated,
@@ -210,44 +223,87 @@ export class GameEngine {
     this.ownIndex = index;
     this.round = 1;
     this.counterUsed = false;
+    this.roundFlipsRemaining = this.computeRoundQuota();
     this.status = GameStatus.FlipRound;
     return events;
   }
 
-  flipCurrentRound(): GameEvent[] {
+  /**
+   * 逐张翻牌主交互（3.6.3）：翻开指定位置的公共牌，点一张翻一张。
+   * 本轮配额耗尽（roundFlipsRemaining → 0）的瞬间才生成这一轮报价并转入 BANKER_OFFER
+   * —— 报价唯一生成点约束不变；否则停留 FLIP_ROUND_N 等待下一张。
+   */
+  flipCardAtPosition(position: number): GameEvent[] {
     this.assertStatus(GameStatus.FlipRound);
-    const events: GameEvent[] = [];
-    // 3.6.3：序列内取配置值，超出序列每轮 1 张；钳制保证翻后总剩余 ≥ 2（含底牌）
-    const configured = this.common.flipSequence[this.round - 1] ?? 1;
-    const publicPositions = this.publicRemainingPositions();
-    const flipCount = Math.min(configured, publicPositions.length - 1);
-    if (flipCount < 1) {
-      throw new Error('翻牌数为 0（引擎内部错误：应已进入终局）');
+    if (!Number.isInteger(position) || position < 0 || position >= POOL_SIZE) {
+      throw new GameRuleError('BAD_FLIP_POSITION', `牌位必须是 [0, ${POOL_SIZE}) 的整数`);
     }
-    // 卡池开局已洗牌，牌位即随机；按牌位升序取前 flipCount 张公共牌，无需再消耗随机流
-    const flipped = publicPositions.slice(0, flipCount);
-    for (const p of flipped) this.eliminated[p] = true;
+    if (position === this.ownIndex) {
+      throw new GameRuleError('BAD_FLIP_POSITION', '底牌已封存，不能翻开');
+    }
+    if (this.eliminated[position]) {
+      throw new GameRuleError('BAD_FLIP_POSITION', '该牌已淘汰，不能重复翻开');
+    }
+    if (this.roundFlipsRemaining <= 0) {
+      throw new Error('本轮配额已耗尽但仍在翻牌态（引擎内部错误：应已生成报价）');
+    }
+    const events: GameEvent[] = [];
+    this.eliminated[position] = true;
+    this.roundFlipsRemaining -= 1;
+    // 单元素数组格式与整轮事件一致，持久化投影/WS 转发无需改字段
     events.push(
       this.emit({
         type: 'cards_flipped',
         round: this.round,
-        positions: flipped,
-        amountsFen: flipped.map((p) => this.poolFen[p]),
+        positions: [position],
+        amountsFen: [this.poolFen[position]],
       }),
     );
-    const offer = rollOffer(
-      this.remainingAmountsFen(),
-      this.tier.maxPrizeFen,
-      this.common,
-      this.round,
-      false,
-      this.rng,
-    );
-    this.currentOffer = offer;
-    this.counterUsed = false; // 新一轮报价：重置还价机会（3.6.5 每轮限 1 次）
-    this.status = GameStatus.BankerOffer;
-    events.push(this.emit({ type: 'offer_made', ...offer }));
+    if (this.roundFlipsRemaining === 0) {
+      // 配额耗尽瞬间：本轮报价唯一生成点
+      const offer = rollOffer(
+        this.remainingAmountsFen(),
+        this.tier.maxPrizeFen,
+        this.common,
+        this.round,
+        false,
+        this.rng,
+      );
+      this.currentOffer = offer;
+      this.counterUsed = false; // 新一轮报价：重置还价机会（3.6.5 每轮限 1 次）
+      this.status = GameStatus.BankerOffer;
+      events.push(this.emit({ type: 'offer_made', ...offer }));
+    }
     return events;
+  }
+
+  /**
+   * 整轮自动翻牌，仅保留给超时托管（autoResolve）的内部路径：按牌位升序逐张淘汰直至
+   * 本轮配额耗尽；实现复用 flipCardAtPosition，报价仍只在配额耗尽瞬间生成一次。
+   */
+  flipCurrentRound(): GameEvent[] {
+    this.assertStatus(GameStatus.FlipRound);
+    const events: GameEvent[] = [];
+    // 卡池开局已洗牌，牌位即随机；按牌位升序逐张翻，无需再消耗随机流
+    for (const p of this.publicRemainingPositions()) {
+      if (this.roundFlipsRemaining === 0) break;
+      events.push(...this.flipCardAtPosition(p));
+    }
+    if (this.roundFlipsRemaining !== 0) {
+      throw new Error('整轮自动翻牌后配额未耗尽（引擎内部错误）');
+    }
+    return events;
+  }
+
+  /** 3.6.3：序列内取配置值，超出序列每轮 1 张；钳制保证翻后总剩余 ≥ 2（含底牌） */
+  private computeRoundQuota(): number {
+    const configured = this.common.flipSequence[this.round - 1] ?? 1;
+    const publicCount = this.publicRemainingPositions().length;
+    const quota = Math.min(configured, publicCount - 1);
+    if (quota < 1) {
+      throw new Error('本轮翻牌配额为 0（引擎内部错误：应已进入终局）');
+    }
+    return quota;
   }
 
   respondOffer(response: OfferResponse): GameEvent[] {
@@ -312,6 +368,7 @@ export class GameEngine {
           events.push(...this.pickOwnCard(0));
           break;
         case GameStatus.FlipRound:
+          // 托管走整轮自动内部路径（逐张淘汰等价，事件仍标 timeout=true）
           events.push(...this.flipCurrentRound());
           break;
         case GameStatus.BankerOffer:
@@ -368,6 +425,7 @@ export class GameEngine {
     }
     if (this.remainingPositions().length > 2) {
       this.round += 1;
+      this.roundFlipsRemaining = this.computeRoundQuota();
       this.status = GameStatus.FlipRound;
       return events;
     }

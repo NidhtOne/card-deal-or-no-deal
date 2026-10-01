@@ -24,6 +24,18 @@ export class PickCardDto {
   index!: number;
 }
 
+/**
+ * POST /api/match/:id/flip —— 语义为「翻指定一张公共牌」（逐张点击）。
+ * 文档外补充：请求体缺 position 或非法时由校验层直接驳回 400（不再存在整轮一键翻牌）。
+ */
+export class FlipCardDto {
+  /** 待翻公共牌位 0–25（非底牌、未淘汰） */
+  @IsInt()
+  @Min(0)
+  @Max(25)
+  position!: number;
+}
+
 /** POST /api/match/:id/counter（还价金额，整数分） */
 export class CounterDto {
   @IsInt()

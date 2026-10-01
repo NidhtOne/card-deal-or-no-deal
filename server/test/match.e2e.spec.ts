@@ -167,6 +167,27 @@ async function sessionRow(sessionId: number): Promise<Record<string, any>> {
   return rows[0]; // eslint-disable-line @typescript-eslint/no-unsafe-return
 }
 
+/**
+ * 逐张 POST /flip {position} 翻完当前轮（M3：整轮一键翻牌已改为逐张点击；
+ * 按牌位升序跳过底牌/已翻位），返回配额耗尽转入报价后的最新 state。
+ */
+async function flipWholeRound(sessionId: number, token: string): Promise<Record<string, any>> {
+  let st = (await api('GET', `/match/${sessionId}/state`, undefined, token)).data;
+  const taken = new Set<number>(
+    (st.flippedCards as { position: number }[]).map((c) => c.position),
+  );
+  if (typeof st.ownCardPosition === 'number') taken.add(st.ownCardPosition);
+  for (let p = 0; p < 26; p++) {
+    if (st.engineStatus !== 'FLIP_ROUND_N') break;
+    if (taken.has(p)) continue;
+    const res = await api('POST', `/match/${sessionId}/flip`, { position: p }, token);
+    expect(res.status).toBe(201);
+    taken.add(p);
+    st = res.data.state;
+  }
+  return st;
+}
+
 /** 连接 /game 命名空间（transports=websocket 避免轮询干扰） */
 function connectWs(token?: string): Promise<Socket> {
   return new Promise((resolve, reject) => {
@@ -210,8 +231,9 @@ describe('完整一局：Deal 成交（验收 1）', () => {
     expect(start.data.state.entryFeeFen).toBe(38800);
     expect(await balance(userId)).toBe(INITIAL_FUNDS_FEN - 38800);
 
-    // 未选底牌前不能翻牌（状态机校验）
-    const early = await api('POST', `/match/${sessionId}/flip`, {}, token);
+    // 请求体缺 position → 400（文档外补充校验）；未选底牌带 position → 409（状态机校验）
+    expect((await api('POST', `/match/${sessionId}/flip`, {}, token)).status).toBe(400);
+    const early = await api('POST', `/match/${sessionId}/flip`, { position: 0 }, token);
     expect(early.status).toBe(409);
 
     const pick = await api('POST', `/match/${sessionId}/pick`, { index: 3 }, token);
@@ -220,11 +242,41 @@ describe('完整一局：Deal 成交（验收 1）', () => {
     expect(pick.data.state.flipQuota).toBe(6);
     expect(pick.data.state.ownCardPosition).toBe(3);
 
-    const flip = await api('POST', `/match/${sessionId}/flip`, {}, token);
-    expect(flip.status).toBe(201);
-    expect(flip.data.state.flippedCards).toHaveLength(6);
-    expect(flip.data.state.engineStatus).toBe('BANKER_OFFER');
-    expect(flip.data.state.round).toBe(1);
+    // 底牌位置不可翻 → 400（引擎 BAD_FLIP_POSITION）
+    expect((await api('POST', `/match/${sessionId}/flip`, { position: 3 }, token)).status).toBe(400);
+
+    // 逐张点击翻牌（M3）：中途配额递减、停留翻牌态；第 6 张后配额耗尽转入报价
+    let flipState = pick.data.state;
+    let flippedCount = 0;
+    for (let p = 0; p < 26; p++) {
+      if (flipState.engineStatus !== 'FLIP_ROUND_N') break;
+      if (p === 3) continue; // 底牌不可翻
+      const res = await api('POST', `/match/${sessionId}/flip`, { position: p }, token);
+      expect(res.status).toBe(201);
+      flippedCount += 1;
+      flipState = res.data.state;
+      if (flippedCount < 6) {
+        expect(flipState.engineStatus).toBe('FLIP_ROUND_N');
+        expect(flipState.flipQuota).toBe(6 - flippedCount);
+        expect(flipState.currentOffer).toBeNull(); // 配额耗尽前不生成报价
+      }
+    }
+    expect(flipState.flippedCards).toHaveLength(6);
+    expect(flipState.engineStatus).toBe('BANKER_OFFER');
+    expect(flipState.flipQuota).toBe(0);
+    expect(flipState.round).toBe(1);
+    expect(flipState.currentOffer).not.toBeNull();
+
+    // 幂等：重复提交同一已翻位置直接返回当前 state，不重复淘汰
+    const dupFlip = await api(
+      'POST',
+      `/match/${sessionId}/flip`,
+      { position: flipState.flippedCards[0].position as number },
+      token,
+    );
+    expect(dupFlip.status).toBe(201);
+    expect(dupFlip.data.state.flippedCards).toHaveLength(6);
+    expect(dupFlip.data.state.engineStatus).toBe('BANKER_OFFER');
 
     // GET offer 只读：两次返回一致（不消耗 RNG）
     const o1 = await api('GET', `/match/${sessionId}/offer`, undefined, token);
@@ -305,7 +357,7 @@ describe('完整一局：还价被接受（验收 1/6，覆盖税 > 0 路径）'
     expect(start.status).toBe(201);
     const sessionId = start.data.sessionId as number;
     await api('POST', `/match/${sessionId}/pick`, { index: 5 }, token);
-    await api('POST', `/match/${sessionId}/flip`, {}, token);
+    await flipWholeRound(sessionId, token);
 
     // 白盒：从 game_cards 读未淘汰金额算 EV（与引擎同值）
     const remaining = (await dataSource.query(
@@ -380,7 +432,7 @@ describe('完整一局：还价被接受（验收 1/6，覆盖税 > 0 路径）'
     const start = await api('POST', '/match/start', { tier: 1 }, token);
     const sessionId = start.data.sessionId as number;
     await api('POST', `/match/${sessionId}/pick`, { index: 1 }, token);
-    await api('POST', `/match/${sessionId}/flip`, {}, token);
+    await flipWholeRound(sessionId, token);
 
     // 还价低于剩余最低面额 → 400，不消耗还价机会
     const bad = await api('POST', `/match/${sessionId}/counter`, { counter: 0 }, token);
@@ -421,7 +473,7 @@ describe('完整一局：拒绝到底换牌（验收 1/6）', () => {
       guard += 1;
       expect(guard).toBeLessThan(50);
       if (state.engineStatus === 'FLIP_ROUND_N') {
-        state = (await api('POST', `/match/${sessionId}/flip`, {}, token)).data.state;
+        state = await flipWholeRound(sessionId, token);
       } else if (state.engineStatus === 'BANKER_OFFER' || state.engineStatus === 'FINAL_OFFER') {
         state = (await api('POST', `/match/${sessionId}/no-deal`, {}, token)).data.state;
       } else if (state.engineStatus === 'SWAP_DECISION') {
@@ -504,7 +556,7 @@ describe('断线重连与防泄牌（验收 2）', () => {
     const start = await api('POST', '/match/start', { tier: 1 }, token);
     const sessionId = start.data.sessionId as number;
     await api('POST', `/match/${sessionId}/pick`, { index: 3 }, token);
-    await api('POST', `/match/${sessionId}/flip`, {}, token);
+    await flipWholeRound(sessionId, token);
 
     // 模拟重连：全新请求 GET state
     const res = await api('GET', `/match/${sessionId}/state`, undefined, token);
@@ -559,7 +611,7 @@ describe('断线重连与防泄牌（验收 2）', () => {
     const start = await api('POST', '/match/start', { tier: 1 }, token);
     const sessionId = start.data.sessionId as number;
     await api('POST', `/match/${sessionId}/pick`, { index: 2 }, token);
-    await api('POST', `/match/${sessionId}/flip`, {}, token);
+    await flipWholeRound(sessionId, token);
 
     const res = await api('GET', `/match/${sessionId}/amount-list`, undefined, token);
     expect(res.status).toBe(200);
@@ -654,8 +706,8 @@ describe('幂等与拒绝分支（验收 4/5）', () => {
     const start = await api('POST', '/match/start', { tier: 1 }, token);
     const sessionId = start.data.sessionId as number;
     await api('POST', `/match/${sessionId}/pick`, { index: 4 }, token);
-    const flip = await api('POST', `/match/${sessionId}/flip`, {}, token);
-    const offerFen = flip.data.state.currentOffer.offerFen as number;
+    const flipState = await flipWholeRound(sessionId, token);
+    const offerFen = flipState.currentOffer.offerFen as number;
 
     const [d1, d2] = await Promise.all([
       api('POST', `/match/${sessionId}/deal`, {}, token),
@@ -736,20 +788,21 @@ describe('WebSocket（6.4，验收 §7）', () => {
 
     await api('POST', `/match/${sessionId}/pick`, { index: 6 }, token);
 
-    // flip → flip_result + offer_ready
-    const flipP = new Promise<Record<string, any>>((resolve) =>
-      socket.on('flip_result', resolve),
-    );
+    // 逐张翻牌（M3）：每张 flip_result（单元素数组）；配额耗尽瞬间 offer_ready
+    const flipMsgs: Record<string, any>[] = [];
+    socket.on('flip_result', (m: Record<string, any>) => flipMsgs.push(m));
     const offerP = new Promise<Record<string, any>>((resolve) =>
       socket.on('offer_ready', resolve),
     );
-    await api('POST', `/match/${sessionId}/flip`, {}, token);
-    const flipMsg = await flipP;
-    expect(flipMsg.sessionId).toBe(sessionId);
-    expect(flipMsg.round).toBe(1);
-    expect(flipMsg.positions).toHaveLength(6);
-    expect(flipMsg.amountsFen).toHaveLength(6);
+    await flipWholeRound(sessionId, token);
     const offerMsg = await offerP;
+    expect(flipMsgs).toHaveLength(6);
+    for (const m of flipMsgs) {
+      expect(m.sessionId).toBe(sessionId);
+      expect(m.round).toBe(1);
+      expect(m.positions).toHaveLength(1);
+      expect(m.amountsFen).toHaveLength(1);
+    }
     expect(offerMsg.sessionId).toBe(sessionId);
     expect(Object.keys(offerMsg.offer).sort()).toEqual([
       'isFinal',
@@ -802,7 +855,7 @@ describe('注销 × 对局结算并发（事务互斥收口验收）', () => {
       const start = await api('POST', '/match/start', { tier: 1 }, token);
       const sessionId = start.data.sessionId as number;
       await api('POST', `/match/${sessionId}/pick`, { index: 0 }, token);
-      await api('POST', `/match/${sessionId}/flip`, {}, token);
+      await flipWholeRound(sessionId, token);
 
       const [dealRes, delRes] = await Promise.all([
         api('POST', `/match/${sessionId}/deal`, {}, token),
@@ -834,7 +887,7 @@ describe('服务重启恢复（验收 7）', () => {
     const start = await api('POST', '/match/start', { tier: 1 }, token);
     const sessionId = start.data.sessionId as number;
     await api('POST', `/match/${sessionId}/pick`, { index: 11 }, token);
-    await api('POST', `/match/${sessionId}/flip`, {}, token);
+    await flipWholeRound(sessionId, token);
 
     // 第一次重启：deadline 未过 → 恢复可续玩
     await app.close();
@@ -859,5 +912,41 @@ describe('服务重启恢复（验收 7）', () => {
     const row = await sessionRow(sessionId);
     expect(row.status).toBe('超时结算');
     expect(row.finished_at).not.toBeNull();
+  });
+});
+
+describe('大厅数据接口：GET /match/tiers（任务书 §0 文档外补充）+ GET /wallet（6.3）', () => {
+  it('GET /match/tiers 输出五档名称/入场门槛/单局最高奖金（整数分），不含任何对局机密字段', async () => {
+    const { token } = await registerAndLogin();
+    const res = await api('GET', '/match/tiers', undefined, token);
+    expect(res.status).toBe(200);
+    expect(res.data).toEqual([
+      { tier: 1, name: '取款机', entryFeeFen: 38800, maxPrizeFen: 388800 },
+      { tier: 2, name: '入门档', entryFeeFen: 200000, maxPrizeFen: 1000000 },
+      { tier: 3, name: '标准档', entryFeeFen: 2000000, maxPrizeFen: 10000000 },
+      { tier: 4, name: '进阶档', entryFeeFen: 8000000, maxPrizeFen: 50000000 },
+      { tier: 5, name: '最高档', entryFeeFen: 22500000, maxPrizeFen: 100000000 },
+    ]);
+    // 机密字段防泄漏：不允许出现卡池模板/权重/k 系数等
+    expect(JSON.stringify(res.data)).not.toMatch(/amounts|weights|kRanges|seed|rng/i);
+
+    const anon = await api('GET', '/match/tiers');
+    expect(anon.status).toBe(401);
+  });
+
+  it('GET /wallet 返回当前余额与最近流水（整数分；初始赠送已入账）', async () => {
+    const { token } = await registerAndLogin();
+    const res = await api('GET', '/wallet', undefined, token);
+    expect(res.status).toBe(200);
+    expect(res.data.balanceFen).toBe(INITIAL_FUNDS_FEN);
+    expect(res.data.flows).toHaveLength(1);
+    expect(res.data.flows[0]).toMatchObject({
+      amountFen: INITIAL_FUNDS_FEN,
+      balanceAfterFen: INITIAL_FUNDS_FEN,
+      type: '初始赠送',
+    });
+
+    const anon = await api('GET', '/wallet');
+    expect(anon.status).toBe(401);
   });
 });

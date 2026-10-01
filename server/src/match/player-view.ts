@@ -56,15 +56,13 @@ export interface PlayerView {
   finishedAt: string | null;
 }
 
-/** 本轮待翻张数（与引擎 flipCurrentRound 的钳制规则一致：翻后总剩余 ≥ 2） */
+/**
+ * 本轮剩余待翻张数 = 引擎 roundFlipsRemaining（文档 5 章 state 定义：当前轮次与本轮待翻张数；
+ * 逐张翻牌后随每次 flip 递减，修复旧实现重算式在翻牌中途恒不回退的问题）。
+ */
 export function computeFlipQuota(snapshot: GameSnapshot): number {
   if (snapshot.status !== GameStatus.FlipRound) return 0;
-  const configured = snapshot.common.flipSequence[snapshot.round - 1] ?? 1;
-  let publicRemaining = 0;
-  for (let i = 0; i < snapshot.eliminated.length; i++) {
-    if (!snapshot.eliminated[i] && i !== snapshot.ownIndex) publicRemaining += 1;
-  }
-  return Math.max(0, Math.min(configured, publicRemaining - 1));
+  return snapshot.roundFlipsRemaining;
 }
 
 /** 从引擎快照 + DB 行组装玩家视图（服务端机密字段一律不带出） */

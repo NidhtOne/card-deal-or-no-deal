@@ -4,7 +4,9 @@
  *
  * 公开 API 合同（供服务端接线阶段对齐）：
  *   createGame({ tierId, seed, tiersConfig, economyConfig }) → GameEngine
- *   命令：pickOwnCard(i) / flipCurrentRound() / respondOffer('deal' | 'noDeal' | { counter })
+ *   命令：pickOwnCard(i) / flipCardAtPosition(p)（逐张翻牌主交互）/
+ *        flipCurrentRound()（整轮自动翻牌，仅超时托管内部路径）/
+ *        respondOffer('deal' | 'noDeal' | { counter })
  *        / decideSwap(swap) / autoResolve() —— 每个命令返回追加的事件数组
  *   查询：getState()（JSON 可序列化快照）/ getLegalActions()
  *   恢复：restoreGame(snapshot)

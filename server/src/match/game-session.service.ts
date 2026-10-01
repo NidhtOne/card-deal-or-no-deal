@@ -27,6 +27,7 @@ import {
   restoreGame,
   GameRuleError,
   GameStatus,
+  POOL_SIZE,
   parseTiersConfig,
   type GameEngine,
   type GameEvent,
@@ -34,7 +35,7 @@ import {
 } from '../game-engine';
 import { WalletService } from '../wallet/wallet.service';
 import { buildPlayerView, computeFlipQuota, type PlayerView } from './player-view';
-import { tierIdByInt, tierIntById } from './tier-map';
+import { TIER_ID_BY_INT, tierIdByInt, tierIntById } from './tier-map';
 
 /** 5 分钟无操作超时（3.6.8 / 七章.5，文档钦定值） */
 const TIMEOUT_MS = 5 * 60 * 1000;
@@ -263,9 +264,24 @@ export class GameSessionService implements OnModuleInit, OnModuleDestroy {
     await this.runCommand(sessionId, userId, (engine) => engine.pickOwnCard(index));
   }
 
-  /** 翻开本轮卡牌（引擎内置轮次配额；该命令同步生成本轮报价，是报价唯一生成点） */
-  async flip(userId: number, sessionId: number): Promise<void> {
-    await this.runCommand(sessionId, userId, (engine) => engine.flipCurrentRound());
+  /**
+   * 翻一张指定位置的公共牌（3.6.3 逐张点击）。
+   * 本轮配额耗尽的瞬间引擎才生成该轮报价，报价唯一生成点不变。
+   * 幂等：重复提交同一已翻位置直接返回当前 state，不重复淘汰、不加流水 —— 文档外补充。
+   */
+  async flip(userId: number, sessionId: number, position: number): Promise<void> {
+    await this.runCommand(sessionId, userId, (engine) => {
+      const snap = engine.getState();
+      if (
+        Number.isInteger(position) &&
+        position >= 0 &&
+        position < POOL_SIZE &&
+        snap.eliminated[position]
+      ) {
+        return []; // 幂等重放：已翻位置不再产生事件
+      }
+      return engine.flipCardAtPosition(position);
+    });
   }
 
   /** 接受报价 → 结算 */
@@ -301,6 +317,29 @@ export class GameSessionService implements OnModuleInit, OnModuleDestroy {
   }
 
   // ---------- 只读查询 ----------
+
+  /**
+   * GET /api/match/tiers（任务书 §0：知识库未定义 —— 文档外补充，注释标注）：
+   * 大厅档位卡片数据源（铁律 7 延伸：前端禁止硬编码档位数值）。
+   * 只输出 tier/name/entryFeeFen/maxPrizeFen，不含任何对局机密（金额模板、权重、k 系数等）。
+   */
+  getTiersView(): { tier: number; name: string; entryFeeFen: number; maxPrizeFen: number }[] {
+    const { tiersRaw } = getGameRawConfigs();
+    const parsed = parseTiersConfig(tiersRaw);
+    const list: { tier: number; name: string; entryFeeFen: number; maxPrizeFen: number }[] = [];
+    for (let tier = 1; tier <= TIER_ID_BY_INT.length; tier++) {
+      const tierId = tierIdByInt(tier);
+      if (!tierId) continue;
+      const cfg = parsed.tiers[tierId];
+      list.push({
+        tier,
+        name: cfg.name,
+        entryFeeFen: cfg.entryFeeFen,
+        maxPrizeFen: cfg.maxPrizeFen,
+      });
+    }
+    return list;
+  }
 
   /** GET state：玩家视图 DTO（脱敏，重连恢复用） */
   async getStateView(userId: number, sessionId: number): Promise<PlayerView> {
