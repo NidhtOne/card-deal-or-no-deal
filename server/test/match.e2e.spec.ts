@@ -72,7 +72,7 @@ async function createApp(): Promise<void> {
     .useValue(fakeClock)
     .compile();
   app = moduleRef.createNestApplication();
-  configureApp(app);
+  await configureApp(app);
   await app.init();
   const server = await app.listen(0, '127.0.0.1');
   const address = server.address();

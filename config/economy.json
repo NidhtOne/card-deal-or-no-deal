@@ -7,8 +7,43 @@
     "brackets": [5000, 20000, 100000, 500000],
     "rates": [0.03, 0.1, 0.2, 0.28, 0.35]
   },
-  "signin": {},
-  "tasks": {},
-  "bailout": {},
-  "achievements": {}
+  "signin": {
+    "_comment": "每日签到（docs/开发文档.md 3.8.2）：base_reward 为基础奖励（元），multiplier_bp 为连签倍数表（day=连签天数下限，bp=整数万分比，10000=×1.0；铁律 4 延伸：全程整数运算，奖励分 = baseFen × bp / 10000）。取档规则 = day ≤ 当日连签天数的最后一档：第1天×1.0、第2天×1.2、第3天×1.5、第4–6天×1.8、第7天起×2.0 封顶。",
+    "base_reward": 100,
+    "multiplier_bp": [
+      { "day": 1, "bp": 10000 },
+      { "day": 2, "bp": 12000 },
+      { "day": 3, "bp": 15000 },
+      { "day": 4, "bp": 18000 },
+      { "day": 7, "bp": 20000 }
+    ]
+  },
+  "tasks": {
+    "_comment": "每日任务（docs/开发文档.md 3.8.3，每日 00:00 刷新）：tier=档位 1–5（取款机/入门/标准/进阶/最高），tier=null 表示任意档位；target=当日需完成局数。【钦定口径】计数时点以七章.6 为准：对局开启扣费成功（match_started）即计数，含勤奋玩家；本游戏无弃权，参加=完成无差异。",
+    "list": [
+      { "code": "atm_1", "name": "新手试水", "tier": 1, "target": 1, "reward": 100 },
+      { "code": "beginner_1", "name": "入门挑战", "tier": 2, "target": 1, "reward": 200 },
+      { "code": "standard_1", "name": "标准对决", "tier": 3, "target": 1, "reward": 500 },
+      { "code": "advanced_1", "name": "进阶博弈", "tier": 4, "target": 1, "reward": 1000 },
+      { "code": "master_1", "name": "巅峰之战", "tier": 5, "target": 1, "reward": 2000 },
+      { "code": "grind_3", "name": "勤奋玩家", "tier": null, "target": 3, "reward": 300 }
+    ]
+  },
+  "bailout": {
+    "_comment": "破产保护（docs/开发文档.md 3.8.4）：余额 < threshold（元）可申请，每次 amount（元），每日最多 max_per_day 次，00:00 重置；对局中不可申请。",
+    "threshold": 388,
+    "amount": 500,
+    "max_per_day": 3
+  },
+  "achievements": {
+    "_comment": "成就系统（docs/开发文档.md 3.8.5，一次性解锁，受 user_settings.achievement_enabled 总开关）：prize_threshold=单局税前奖金门槛（元，百万梦想）；streak=连续盈利局数（连胜猎手，口径冻结【文档未定义，待人工最终确认】：保本截断——保本局不计入连胜也不归零前段，追溯遇 net_profit≤0 即停）；games=累计完成局数（勤劳玩家，含超时托管结算局）。博弈到底仅终局换牌（swap）结算解锁。",
+    "list": [
+      { "code": "first_match", "name": "初出茅庐", "reward": 150 },
+      { "code": "million_dream", "name": "百万梦想", "reward": 800, "prize_threshold": 1000000 },
+      { "code": "never_deal", "name": "博弈到底", "reward": 300 },
+      { "code": "comeback", "name": "东山再起", "reward": 400 },
+      { "code": "win_streak", "name": "连胜猎手", "reward": 500, "streak": 5 },
+      { "code": "hundred_games", "name": "勤劳玩家", "reward": 600, "games": 100 }
+    ]
+  }
 }

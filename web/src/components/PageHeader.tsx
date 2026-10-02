@@ -2,6 +2,8 @@ import { NavLink } from 'react-router-dom';
 
 const LINKS = [
   { to: '/lobby', label: '游戏大厅' },
+  // 成就页（文档第四章路由清单；M4 新增入口）
+  { to: '/achievements', label: '成就' },
   { to: '/profile', label: '个人中心' },
   { to: '/profile/character', label: '我的角色' },
   { to: '/settings', label: '设置' },

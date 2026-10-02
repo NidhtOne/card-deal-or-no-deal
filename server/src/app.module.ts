@@ -7,6 +7,7 @@ import { DatabaseModule } from './database/database.module';
 import { HealthController } from './health/health.controller';
 import { EventsGateway } from './events/events.gateway';
 import { AuthModule } from './auth/auth.module';
+import { EconomyModule } from './economy/economy.module';
 import { MatchModule } from './match/match.module';
 import { UserModule } from './user/user.module';
 import { WalletController } from './wallet/wallet.controller';
@@ -47,6 +48,8 @@ function buildServeStaticOptions(): ServeStaticModuleOptions[] {
     AuthModule,
     UserModule,
     MatchModule,
+    // M4 第一期：签到/任务/破产救助/成就（3.8.2–3.8.5；历史与统计另排期）
+    EconomyModule,
   ],
   // WalletController 挂这里而非 WalletModule：AuthModule 依赖 WalletModule，反向引入会循环依赖
   controllers: [HealthController, WalletController],

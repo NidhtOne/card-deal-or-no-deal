@@ -2,12 +2,18 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, getErrorMessage } from '../api/client';
 import {
+  economyApi,
+  type AchievementItem,
+  type SigninResult,
+  type TaskItem,
+} from '../api/economy';
+import {
   getStartConflictSessionId,
   isHttpStatus,
   matchApi,
   type TierInfo,
 } from '../api/match';
-import { userApi } from '../api/user';
+import { userApi, type Overview } from '../api/user';
 import { walletApi } from '../api/wallet';
 import Layout from '../components/Layout';
 import PageHeader from '../components/PageHeader';
@@ -29,9 +35,21 @@ export default function LobbyPage() {
   const [balanceFen, setBalanceFen] = useState<number | null>(null);
   const [tiers, setTiers] = useState<TierInfo[] | null>(null);
   const [riskPopupEnabled, setRiskPopupEnabled] = useState(true);
+  const [overview, setOverview] = useState<Overview | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [starting, setStarting] = useState(false);
+  // M4：签到/任务/救助/成就（入口原为占位，现为真实逻辑；「音乐」不在本阶段，仍占位）
+  const [showSignin, setShowSignin] = useState(false);
+  const [signinResult, setSigninResult] = useState<SigninResult | null>(null);
+  const [signingIn, setSigningIn] = useState(false);
+  const [showTasks, setShowTasks] = useState(false);
+  const [tasks, setTasks] = useState<TaskItem[] | null>(null);
+  const [claimingTask, setClaimingTask] = useState<string | null>(null);
+  const [applyingBailout, setApplyingBailout] = useState(false);
+  // 【触发时点文档未定义，按此口径注释标注】待领取成就进入大厅时弹出（一键领取）
+  const [unclaimedAchievements, setUnclaimedAchievements] = useState<AchievementItem[]>([]);
+  const [claimingAchievement, setClaimingAchievement] = useState(false);
   /**
    * 开局幂等键（M2 幂等机制）：每次点击新生成 crypto.randomUUID()；
    * 同一次点击的双击被 starting 抑制，网络异常后的重试复用同一 key（防重复扣费）；
@@ -40,19 +58,125 @@ export default function LobbyPage() {
   const startKeyRef = useRef<{ tier: number; key: string } | null>(null);
 
   const loadAll = useCallback(async () => {
-    const [wallet, tierList, settings] = await Promise.all([
+    const [wallet, tierList, settings, ov, achievements] = await Promise.all([
       walletApi.getWallet(),
       matchApi.getTiers(),
       userApi.getSettings(),
+      userApi.getOverview(),
+      economyApi.getAchievements(),
     ]);
     setBalanceFen(wallet.balanceFen);
     setTiers(tierList);
     setRiskPopupEnabled(settings.riskPopupEnabled);
+    setOverview(ov);
+    // 口径 f（注释标注）：总开关 off 时不弹窗（后台照常累计，重开可见）
+    if (achievements.enabled) {
+      setUnclaimedAchievements(achievements.list.filter((a) => a.unlocked && !a.claimed));
+    }
   }, []);
 
   useEffect(() => {
     loadAll().catch((err) => setError(getErrorMessage(err)));
   }, [loadAll]);
+
+  // ---------- M4：签到 ----------
+  async function onOpenSignin() {
+    setShowSignin(true);
+    setSigninResult(null);
+  }
+
+  async function onSignin() {
+    if (signingIn) return;
+    setSigningIn(true);
+    setError('');
+    try {
+      const res = await economyApi.signin();
+      // 幂等：重复提交 res.signed=false 且返回既有奖励，流水仅一条
+      setSigninResult(res);
+      setBalanceFen(res.balanceFen);
+      await loadAll().catch(() => undefined);
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setSigningIn(false);
+    }
+  }
+
+  // ---------- M4：每日任务 ----------
+  async function onOpenTasks() {
+    setShowTasks(true);
+    try {
+      const view = await economyApi.getTasks();
+      setTasks(view.tasks);
+    } catch (err) {
+      setError(getErrorMessage(err));
+    }
+  }
+
+  async function onClaimTask(code: string) {
+    if (claimingTask) return;
+    setClaimingTask(code);
+    setError('');
+    try {
+      const res = await economyApi.claimTask(code);
+      setNotice(
+        res.alreadyClaimed
+          ? '任务奖励已领取'
+          : `已领取任务奖励 ¥${formatMoney(res.rewardFen)}`,
+      );
+      setBalanceFen(res.balanceFen);
+      const view = await economyApi.getTasks();
+      setTasks(view.tasks);
+      await loadAll().catch(() => undefined);
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setClaimingTask(null);
+    }
+  }
+
+  // ---------- M4：破产救助（本阶段仅大厅入口；needsReminder 弹窗 UI 阶段 6 接入，见 api/economy.ts） ----------
+  async function onBailout() {
+    if (applyingBailout) return;
+    setApplyingBailout(true);
+    setError('');
+    try {
+      const res = await economyApi.applyBailout();
+      setBalanceFen(res.balanceFen);
+      setNotice(
+        `破产救助已到账 ¥${formatMoney(res.amountFen)}，今日剩余 ${res.remaining} 次`,
+      );
+      await loadAll().catch(() => undefined);
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setApplyingBailout(false);
+    }
+  }
+
+  // ---------- M4：待领取成就一键领取 ----------
+  async function onClaimAllAchievements() {
+    if (claimingAchievement) return;
+    setClaimingAchievement(true);
+    setError('');
+    try {
+      let lastBalance: number | null = null;
+      for (const a of unclaimedAchievements) {
+        const res = await economyApi.claimAchievement(a.code);
+        lastBalance = res.balanceFen;
+      }
+      if (lastBalance !== null) setBalanceFen(lastBalance);
+      setUnclaimedAchievements([]);
+      setNotice('成就奖励已全部领取');
+      await loadAll().catch(() => undefined);
+    } catch (err) {
+      setError(getErrorMessage(err));
+      const view = await economyApi.getAchievements().catch(() => null);
+      if (view) setUnclaimedAchievements(view.list.filter((a) => a.unlocked && !a.claimed));
+    } finally {
+      setClaimingAchievement(false);
+    }
+  }
 
   async function onLogout() {
     try {
@@ -120,17 +244,59 @@ export default function LobbyPage() {
             <div className="mt-1 text-xs text-slate-500">{user?.username}</div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {/* 签到/任务/救助/音乐入口占位（任务书 §1：阶段 5、6 接入） */}
-            {['签到', '任务', '破产救助', '音乐'].map((label) => (
-              <button
-                key={label}
-                disabled
-                title="后续阶段上线"
-                className="cursor-not-allowed rounded border border-slate-800 px-4 py-2 text-sm text-slate-600"
-              >
-                {label}
-              </button>
-            ))}
+            {/* 签到入口（M4 真实逻辑；连签天数展示） */}
+            <button
+              onClick={() => void onOpenSignin()}
+              className="rounded border border-amber-700/60 bg-amber-500/10 px-4 py-2 text-sm text-amber-300 hover:bg-amber-500/20"
+            >
+              签到
+              {overview && (
+                <span className="ml-1 text-xs text-amber-200/80">
+                  {overview.todaySignedIn
+                    ? `已签·连签 ${overview.signinStreakDays} 天`
+                    : overview.signinStreakDays > 0
+                      ? `未签·连签 ${overview.signinStreakDays} 天`
+                      : '未签'}
+                </span>
+              )}
+            </button>
+            {/* 每日任务入口（M4 真实逻辑：进度 + 领奖面板） */}
+            <button
+              onClick={() => void onOpenTasks()}
+              className="rounded border border-sky-700/60 bg-sky-500/10 px-4 py-2 text-sm text-sky-300 hover:bg-sky-500/20"
+            >
+              任务
+            </button>
+            {/* 破产救助入口（M4 真实逻辑：3.8.4 仅余额低于门槛可申请，本阶段仅入口高亮展示） */}
+            <button
+              onClick={() => void onBailout()}
+              disabled={!overview?.bailoutEligible || applyingBailout}
+              title={
+                overview?.bailoutEligible
+                  ? `每次 ¥500，每日最多 ${overview.bailoutMaxPerDay} 次（今日已用 ${overview.todayBailoutUsed} 次）`
+                  : '余额低于 ¥388 时可申请破产救助'
+              }
+              className={
+                overview?.bailoutEligible
+                  ? 'rounded border border-rose-600 bg-rose-500/10 px-4 py-2 text-sm text-rose-300 hover:bg-rose-500/20'
+                  : 'cursor-not-allowed rounded border border-slate-800 px-4 py-2 text-sm text-slate-600'
+              }
+            >
+              破产救助
+              {overview && overview.todayBailoutUsed > 0 && (
+                <span className="ml-1 text-xs">
+                  {overview.todayBailoutUsed}/{overview.bailoutMaxPerDay}
+                </span>
+              )}
+            </button>
+            {/* 音乐入口不在本阶段（属 M3 后续打磨），仍占位 */}
+            <button
+              disabled
+              title="后续阶段上线"
+              className="cursor-not-allowed rounded border border-slate-800 px-4 py-2 text-sm text-slate-600"
+            >
+              音乐
+            </button>
             <button
               onClick={onLogout}
               className="rounded border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:border-rose-400 hover:text-rose-300"
@@ -198,6 +364,163 @@ export default function LobbyPage() {
           对局存在亏损风险，入场资金输掉不予返还，请理性游玩
         </p>
       </div>
+
+      {/* 签到弹窗（M4）—— 连胜进度以圆点条展示（日历视图为产品新增，注释标注） */}
+      {showSignin && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-sm rounded-xl border border-slate-700 bg-slate-900 p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-base font-bold text-amber-300">每日签到</h3>
+              <button
+                onClick={() => setShowSignin(false)}
+                className="text-slate-500 hover:text-slate-300"
+              >
+                ✕
+              </button>
+            </div>
+            {signinResult ? (
+              <div className="flex flex-col gap-3">
+                <p className="text-sm text-slate-200">
+                  {signinResult.signed ? '签到成功！' : '今日已签到，请勿重复提交'}
+                  奖励 ¥{formatMoney(signinResult.rewardFen)}（×
+                  {signinResult.multiplierBp / 10000}）
+                </p>
+                <p className="text-xs text-slate-500">
+                  连签 {signinResult.streakDays} 天 · 明日可领 ¥
+                  {formatMoney(signinResult.nextRewardFen)}
+                </p>
+                {/* 连胜圆点条（日历视图产品新增）：7 点为连签档位进度（第 7 天起封顶） */}
+                <div className="flex items-center gap-1.5">
+                  {Array.from({ length: 7 }, (_, i) => (
+                    <span
+                      key={i}
+                      className={`h-2.5 w-2.5 rounded-full ${
+                        i < Math.min(signinResult.streakDays, 7)
+                          ? 'bg-amber-400'
+                          : 'bg-slate-700'
+                      }`}
+                    />
+                  ))}
+                  <span className="ml-1 text-xs text-slate-500">7 天起锁定 ×2.0</span>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3">
+                <p className="text-sm text-slate-300">
+                  {overview?.todaySignedIn
+                    ? `今日已签到，连签 ${overview.signinStreakDays} 天`
+                    : overview && overview.signinStreakDays > 0
+                      ? `今日尚未签到（当前连签 ${overview.signinStreakDays} 天）`
+                      : '今日尚未签到'}
+                </p>
+                <p className="text-xs text-slate-500">
+                  断签次日连签清零；00:00 刷新，不可补签。
+                </p>
+                {!overview?.todaySignedIn && (
+                  <button
+                    onClick={() => void onSignin()}
+                    disabled={signingIn}
+                    className="rounded-lg bg-amber-500 py-2 text-sm font-semibold text-slate-950 hover:bg-amber-400 disabled:opacity-50"
+                  >
+                    {signingIn ? '签到中…' : '立即签到'}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 每日任务面板（M4） */}
+      {showTasks && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4">
+          <div className="flex max-h-[80vh] w-full max-w-md flex-col rounded-xl border border-slate-700 bg-slate-900 p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-base font-bold text-sky-300">每日任务</h3>
+              <button
+                onClick={() => setShowTasks(false)}
+                className="text-slate-500 hover:text-slate-300"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="mb-3 text-xs text-slate-500">
+              每日 00:00 刷新，未领取奖励次日失效。
+            </p>
+            <div className="flex flex-col gap-2 overflow-y-auto">
+              {(tasks ?? []).map((t) => (
+                <div
+                  key={t.code}
+                  className="flex items-center justify-between rounded-lg border border-slate-700/70 bg-slate-950/60 px-3 py-2"
+                >
+                  <div>
+                    <div className="text-sm text-slate-100">
+                      {t.name}
+                      <span className="ml-2 text-xs text-amber-300/90">
+                        ¥{formatMoney(t.rewardFen)}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 text-xs text-slate-500">
+                      {t.requirement} · 进度 {Math.min(t.progress, t.target)}/{t.target}
+                    </div>
+                  </div>
+                  {t.claimed ? (
+                    <span className="text-xs text-slate-500">已领取</span>
+                  ) : t.claimable ? (
+                    <button
+                      onClick={() => void onClaimTask(t.code)}
+                      disabled={claimingTask !== null}
+                      className="rounded border border-sky-600 bg-sky-500/10 px-3 py-1 text-xs text-sky-300 hover:bg-sky-500/20 disabled:opacity-50"
+                    >
+                      {claimingTask === t.code ? '领取中…' : '领取'}
+                    </button>
+                  ) : (
+                    <span className="text-xs text-slate-600">未完成</span>
+                  )}
+                </div>
+              ))}
+              {tasks === null && (
+                <p className="py-6 text-center text-xs text-slate-500">加载中…</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 待领取成就进入大厅弹出（触发时点文档未定义、按此口径注释标注；一键领取，可关闭手动前往成就页） */}
+      {unclaimedAchievements.length > 0 && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-sm rounded-xl border border-amber-700/60 bg-slate-900 p-5">
+            <h3 className="mb-3 text-base font-bold text-amber-300">成就达成！</h3>
+            <div className="mb-4 flex flex-col gap-2">
+              {unclaimedAchievements.map((a) => (
+                <div
+                  key={a.code}
+                  className="flex items-center justify-between rounded-lg border border-slate-700/70 bg-slate-950/60 px-3 py-2"
+                >
+                  <span className="text-sm text-slate-100">{a.name}</span>
+                  <span className="text-xs text-amber-300">¥{formatMoney(a.rewardFen)}</span>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => void onClaimAllAchievements()}
+                disabled={claimingAchievement}
+                className="flex-1 rounded-lg bg-amber-500 py-2 text-sm font-semibold text-slate-950 hover:bg-amber-400 disabled:opacity-50"
+              >
+                {claimingAchievement ? '领取中…' : '一键领取'}
+              </button>
+              <button
+                onClick={() => setUnclaimedAchievements([])}
+                className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:border-slate-500"
+              >
+                稍后领取
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }

@@ -25,6 +25,7 @@ import { GameGateway } from './match.gateway';
   ],
   controllers: [MatchController],
   providers: [GameSessionService, GameGateway, { provide: CLOCK, useClass: SystemClock }],
-  exports: [GameSessionService],
+  // CLOCK 同步导出：M4 经济模块复用同一注入时钟令牌（「今日」判定与超时统一口径）
+  exports: [GameSessionService, CLOCK],
 })
 export class MatchModule {}

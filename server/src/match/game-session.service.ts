@@ -34,6 +34,7 @@ import {
   type GameSnapshot,
 } from '../game-engine';
 import { WalletService } from '../wallet/wallet.service';
+import type { MatchSettledPayload, MatchStartedPayload } from './match-events';
 import { buildPlayerView, computeFlipQuota, type PlayerView } from './player-view';
 import { TIER_ID_BY_INT, tierIdByInt, tierIntById } from './tier-map';
 
@@ -243,13 +244,14 @@ export class GameSessionService implements OnModuleInit, OnModuleDestroy {
         timeoutDeadlineMs: created.deadlineMs,
         timeoutWarned: false,
       });
-      // 七章.6 任务进度钩子（阶段 5 消费；@nestjs/event-emitter —— 文档外补充）
-      this.events.emit('match_started', {
+      // 七章.6 任务进度钩子（M4 经济模块消费；@nestjs/event-emitter —— 文档外补充）
+      const payload: MatchStartedPayload = {
         userId,
         sessionId: created.sessionId,
         tier,
         entryFeeFen: tierCfg.entryFeeFen,
-      });
+      };
+      this.events.emit('match_started', payload);
     }
     return {
       sessionId: created.sessionId,
@@ -643,10 +645,11 @@ export class GameSessionService implements OnModuleInit, OnModuleDestroy {
     this.queues.delete(sessionId);
     if (!outcome) return;
 
-    this.events.emit('match_settled', {
+    // 七章.6 成就判定钩子（M4 经济模块消费）：含超时托管结算路径
+    const payload: MatchSettledPayload = {
       userId,
       sessionId,
-      tier: tierIntById(snapshot.tierId),
+      tier: tierIntById(snapshot.tierId) as number,
       status: dbStatus,
       timeout: isTimeout,
       settlement: {
@@ -658,7 +661,8 @@ export class GameSessionService implements OnModuleInit, OnModuleDestroy {
       },
       netProfitFen,
       settledBalanceFen: outcome.settledBalanceFen,
-    });
+    };
+    this.events.emit('match_settled', payload);
   }
 
   /** 引擎事件 → 进程内事件总线（WS 网关转发；载荷只含玩家视图字段，禁泄牌） */

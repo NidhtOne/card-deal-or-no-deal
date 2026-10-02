@@ -16,9 +16,9 @@ import { configureApp } from '../src/main';
 
 jest.setTimeout(120000);
 
-// 测试库与上传目录使用独立临时目录，避免污染开发库与仓库 storage/
+// 库路径由 setup-env 按 worker 分配（import 提升导致此处赋值无效，勿再加）
+// 测试上传目录使用独立临时目录，避免污染仓库 storage/
 const tmpDir = mkdtempSync(join(tmpdir(), 'dond-user-test-'));
-process.env.DATABASE_URL = join(tmpDir, 'test.db');
 process.env.STORAGE_DIR = join(tmpDir, 'storage');
 
 let app: INestApplication;
@@ -136,7 +136,7 @@ const GIF_1PX = Buffer.from(
 beforeAll(async () => {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
   app = moduleRef.createNestApplication();
-  configureApp(app);
+  await configureApp(app);
   await app.init();
   const server = await app.listen(0, '127.0.0.1');
   const address = server.address();

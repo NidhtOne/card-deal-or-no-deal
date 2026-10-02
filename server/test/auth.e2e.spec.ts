@@ -1,8 +1,5 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { mkdtempSync, rmSync } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { parseDbDate } from '../src/common/db-date';
@@ -15,9 +12,7 @@ import { configureApp } from '../src/main';
 
 jest.setTimeout(120000);
 
-// 测试库使用独立临时目录，避免污染开发库
-const tmpDir = mkdtempSync(join(tmpdir(), 'dond-test-'));
-process.env.DATABASE_URL = join(tmpDir, 'test.db');
+// 库路径由 setup-env 按 worker 分配（import 提升导致此处赋值无效，勿再加）
 
 let app: INestApplication;
 let dataSource: DataSource;
@@ -76,7 +71,7 @@ async function registerUser(username: string, extra: Record<string, unknown> = {
 beforeAll(async () => {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
   app = moduleRef.createNestApplication();
-  configureApp(app);
+  await configureApp(app);
   await app.init();
   const server = await app.listen(0, '127.0.0.1');
   const address = server.address();
@@ -87,7 +82,6 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await app?.close();
-  rmSync(tmpDir, { recursive: true, force: true });
 });
 
 describe('注册', () => {

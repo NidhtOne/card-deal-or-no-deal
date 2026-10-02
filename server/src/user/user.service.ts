@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -10,7 +11,13 @@ import * as bcrypt from 'bcryptjs';
 import { DataSource, In, Repository } from 'typeorm';
 import { parseDbDate } from '../common/db-date';
 import { isUniqueViolation } from '../common/db-error';
+import { localDateOf, shiftLocalDate } from '../common/local-date';
 import { runInTransaction } from '../common/transaction';
+import { getEconomyExt } from '../config/economy';
+import { BailoutRecord } from '../entities/bailout-record.entity';
+import { DailySignin } from '../entities/daily-signin.entity';
+import { UserTaskProgress } from '../entities/user-task-progress.entity';
+import { UserAchievement } from '../entities/user-achievement.entity';
 import { FundFlow } from '../entities/fund-flow.entity';
 import { GameSession } from '../entities/game-session.entity';
 import { RefreshToken } from '../entities/refresh-token.entity';
@@ -19,6 +26,7 @@ import { UserProfile } from '../entities/user-profile.entity';
 import { UserSettings } from '../entities/user-settings.entity';
 import { UserWallet } from '../entities/user-wallet.entity';
 import { User } from '../entities/user.entity';
+import { CLOCK, type Clock } from '../match/clock';
 import { AssetCatalogService } from '../upload/asset-catalog.service';
 import { UploadedImage, UploadService } from '../upload/upload.service';
 import { UpdateProfileDto, UpdateSettingsDto } from './dto/user.dto';
@@ -56,16 +64,23 @@ export interface SettingsView {
 
 /**
  * GET /api/user/overview 返回结构（6.2 未定义 —— 文档外补充，落实 3.2「账户信息/数据概览」）。
- * balance 为真实值（单位：分）；后六项属签到/救助/对局统计，M4 阶段接真实逻辑，先返回占位默认值。
+ * balance / 签到 / 破产救助字段为 M4 第一期真实值（金额单位：分；「今日」服务器本地日期）；
+ * totalMatches / totalProfit / winRate 属对决历史与统计（3.10），本阶段不含、另排期，先占位。
+ * bailoutEligible / bailoutMaxPerDay 为大厅破产救助入口高亮数据源（门槛/每日上限取 config，
+ * 铁律 7 延伸：数值禁止前端硬编码）—— 文档外补充字段，注释标注。
  */
 export interface OverviewView {
   balance: number;
-  todaySignedIn: boolean; // M4 占位
-  signinStreakDays: number; // M4 占位
-  todayBailoutUsed: number; // M4 占位
-  totalMatches: number; // M4 占位
-  totalProfit: number; // M4 占位（单位：分）
-  winRate: number; // M4 占位（0-1）
+  todaySignedIn: boolean;
+  signinStreakDays: number;
+  todayBailoutUsed: number;
+  /** 余额 < 破产救助门槛（3.8.4，服务端分制比较结果） */
+  bailoutEligible: boolean;
+  /** 破产救助每日上限次数（config/economy.json bailout.max_per_day） */
+  bailoutMaxPerDay: number;
+  totalMatches: number; // 3.10 历史统计阶段占位
+  totalProfit: number; // 3.10 历史统计阶段占位（单位：分）
+  winRate: number; // 3.10 历史统计阶段占位（0-1）
 }
 
 /** 角色立绘历史项（GET /api/user/character/history，6.2 未定义 —— 文档外补充） */
@@ -93,6 +108,7 @@ export class UserService {
     @InjectRepository(UserWallet) private readonly wallets: Repository<UserWallet>,
     @InjectRepository(UserCharacterImage)
     private readonly characterImages: Repository<UserCharacterImage>,
+    @Inject(CLOCK) private readonly clock: Clock,
     private readonly uploadService: UploadService,
     private readonly assetCatalog: AssetCatalogService,
   ) {}
@@ -257,15 +273,32 @@ export class UserService {
     return this.getSettings(userId);
   }
 
-  /** GET /api/user/overview —— 账户聚合（6.2 未定义 —— 文档外补充；统计项 M4 接真实逻辑） */
+  /** GET /api/user/overview —— 账户聚合（6.2 未定义 —— 文档外补充；M4 签到/救助字段已接真实逻辑） */
   async getOverview(userId: number): Promise<OverviewView> {
     const wallet = await this.wallets.findOne({ where: { userId } });
+    const balance = wallet?.balance ?? 0;
+    const today = localDateOf(this.clock.now());
+    // 连签口径（3.8.2）：今日已签 → 当日 streak；今日未签但昨日有签 → 连签尚未断（次日 00:00 才清零），否则 0
+    const latestSignin = await this.dataSource.getRepository(DailySignin).findOne({
+      where: { userId },
+      order: { signDate: 'DESC' },
+    });
+    const todaySignedIn = latestSignin?.signDate === today;
+    const streakAlive =
+      todaySignedIn || latestSignin?.signDate === shiftLocalDate(today, -1);
+    const signinStreakDays = latestSignin && streakAlive ? latestSignin.streakDays : 0;
+    const todayBailoutUsed = await this.dataSource.getRepository(BailoutRecord).count({
+      where: { userId, applyDate: today },
+    });
+    const bailoutCfg = getEconomyExt().bailout;
     return {
-      balance: wallet?.balance ?? 0,
-      // 以下六项：3.2 账户信息/数据概览，签到/破产救助/对局统计属 M4 阶段 —— 先返回占位默认值
-      todaySignedIn: false,
-      signinStreakDays: 0,
-      todayBailoutUsed: 0,
+      balance,
+      todaySignedIn,
+      signinStreakDays,
+      todayBailoutUsed,
+      bailoutEligible: balance < bailoutCfg.thresholdFen,
+      bailoutMaxPerDay: bailoutCfg.maxPerDay,
+      // 对决历史与统计（3.10）本阶段不含、另排期 —— 先返回占位默认值
       totalMatches: 0,
       totalProfit: 0,
       winRate: 0,
@@ -437,7 +470,12 @@ export class UserService {
         [userId],
       );
       await manager.delete(GameSession, { userId });
-      // TODO(M4)：daily_signins / 任务 / 救助 / 成就记录
+      // M4 经济记录（daily_signins / user_task_progress / bailout_records / user_achievements；
+      // daily_tasks / achievements 为全局定义表，不随用户删除）
+      await manager.delete(UserAchievement, { userId });
+      await manager.delete(UserTaskProgress, { userId });
+      await manager.delete(BailoutRecord, { userId });
+      await manager.delete(DailySignin, { userId });
       await manager.delete(User, { id: userId });
     });
 

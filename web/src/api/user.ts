@@ -12,12 +12,19 @@ export interface Profile {
   usernameChangedAt: string | null;
 }
 
-/** GET /api/user/overview 返回结构（文档外补充；统计项 M4 前为占位默认值） */
+/**
+ * GET /api/user/overview 返回结构（文档外补充）。
+ * M4：签到/破产救助字段为真实值；totalMatches/totalProfit/winRate 属 3.10 历史统计另排期占位。
+ */
 export interface Overview {
   balance: number;
   todaySignedIn: boolean;
   signinStreakDays: number;
   todayBailoutUsed: number;
+  /** 余额 < 破产救助门槛（3.8.4；大厅入口高亮依据，数值禁止前端硬编码） */
+  bailoutEligible: boolean;
+  /** 破产救助每日上限（config/economy.json） */
+  bailoutMaxPerDay: number;
   totalMatches: number;
   totalProfit: number;
   winRate: number;

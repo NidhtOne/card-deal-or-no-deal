@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { parseEconomyConfig, parseTiersConfig } from '../game-engine';
+import { parseEconomyExt } from './economy';
 import { REPO_ROOT } from './paths';
 
 /**
@@ -28,6 +29,8 @@ export function getGameRawConfigs(): GameRawConfigs {
   // fail fast：配置非法时抛 ConfigError，拒绝启动
   parseTiersConfig(tiersRaw);
   parseEconomyConfig(economyRaw);
+  // M4 经济扩展段（3.8.2–3.8.5）同样启动即校验
+  parseEconomyExt(economyRaw);
   cached = { tiersRaw, economyRaw };
   return cached;
 }

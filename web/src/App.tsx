@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import RequireAuth from './components/RequireAuth';
+import AchievementsPage from './pages/AchievementsPage';
 import CharacterPage from './pages/CharacterPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import LobbyPage from './pages/LobbyPage';
@@ -14,8 +15,8 @@ import SettingsPage from './pages/SettingsPage';
 /**
  * 路由（文档第四章，逐字）。已实现：/login、/register、/forgot-password、/lobby、
  * /match/load/:sessionId、/match/play/:sessionId、/match/result/:sessionId、
- * /profile、/profile/character、/settings。全部需登录页面均有路由守卫。
- * 其余路由（/history、/achievements）后续阶段补齐。
+ * /profile、/profile/character、/settings、/achievements（M4）。全部需登录页面均有路由守卫。
+ * 其余路由（/history）随历史与统计阶段补齐。
  */
 export default function App() {
   return (
@@ -30,6 +31,7 @@ export default function App() {
           <Route path="/match/load/:sessionId" element={<MatchLoadPage />} />
           <Route path="/match/play/:sessionId" element={<MatchPlayPage />} />
           <Route path="/match/result/:sessionId" element={<MatchResultPage />} />
+          <Route path="/achievements" element={<AchievementsPage />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/profile/character" element={<CharacterPage />} />
           <Route path="/settings" element={<SettingsPage />} />
