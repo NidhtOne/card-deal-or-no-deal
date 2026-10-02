@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { getErrorMessage } from '../api/client';
+import { AudioManager } from '../audio/AudioManager';
 import {
   getStartConflictSessionId,
   isHttpStatus,
@@ -47,6 +48,7 @@ export default function MatchResultPage() {
         return;
       }
       setView(st);
+      AudioManager.playSfx('settle'); // 结算【文档外补充：3.9 未定义音效事件清单】
       const tiers = await matchApi.getTiers();
       if (!cancelled) setTierName(tiers.find((t) => t.tier === st.tier)?.name ?? `档位 ${st.tier}`);
     })().catch((err) => {

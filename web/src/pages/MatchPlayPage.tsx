@@ -11,7 +11,9 @@ import {
 } from '../api/gameSocket';
 import { matchApi, type AmountListView, type PlayerView } from '../api/match';
 import { userApi } from '../api/user';
+import { AudioManager, type SfxEvent } from '../audio/AudioManager';
 import CounterModal from '../components/CounterModal';
+import MuteButton from '../components/MuteButton';
 import OfferModal from '../components/OfferModal';
 import Layout from '../components/Layout';
 import { formatMoney } from '../utils/money';
@@ -212,6 +214,7 @@ export default function MatchPlayPage() {
     ? `${view.currentOffer.round}-${view.currentOffer.isFinal}-${view.currentOffer.offerFen}`
     : null;
   useEffect(() => {
+    if (offerKey) AudioManager.playSfx('offer'); // 新报价出现【文档外补充音效事件】
     setOfferModalDismissed(false);
     setCounterOpen(false);
     setCounterError('');
@@ -231,6 +234,10 @@ export default function MatchPlayPage() {
   const settlement = view?.settlement ?? null;
   useEffect(() => {
     if (!settlement) return;
+    // 开牌（终局换牌揭晓）音效【文档外补充】；deal/counter 成交音效已在命令处播过
+    if (settlement.reason === 'keep' || settlement.reason === 'swap') {
+      AudioManager.playSfx('reveal');
+    }
     const timer = window.setTimeout(
       () => navigate(`/match/result/${id}`, { replace: true }),
       SETTLE_OVERLAY_MS,
@@ -246,15 +253,19 @@ export default function MatchPlayPage() {
     [],
   );
 
-  /** 命令骨架：成功后应用返回的最新 state；失败一律拉齐后端 state（如还价 400 不耗次数） */
+  /**
+   * 命令骨架：成功后应用返回的最新 state；失败一律拉齐后端 state（如还价 400 不耗次数）。
+   * sfx：成功后播的音效事件【文档外补充：3.9 未定义音效事件清单，见 AudioManager 头注释】。
+   */
   const runCommand = useCallback(
-    async (fn: () => Promise<{ state: PlayerView }>) => {
+    async (fn: () => Promise<{ state: PlayerView }>, sfx?: SfxEvent) => {
       if (busy) return;
       setBusy(true);
       setError('');
       setWarnSeconds(null);
       try {
         const { state } = await fn();
+        if (sfx) AudioManager.playSfx(sfx);
         applyView(state);
       } catch (err) {
         setError(getErrorMessage(err));
@@ -273,6 +284,7 @@ export default function MatchPlayPage() {
       setCounterError('');
       try {
         const { state } = await matchApi.counter(id, counterFen);
+        AudioManager.playSfx('deal'); // 还价被接受 = 成交【文档外补充：同「成交」音效事件】
         applyView(state);
         setCounterOpen(false);
       } catch (err) {
@@ -361,7 +373,7 @@ export default function MatchPlayPage() {
         disabled={!clickable}
         onClick={() => {
           if (picking) void runCommand(() => matchApi.pick(id, position));
-          else if (flipping) void runCommand(() => matchApi.flip(id, position));
+          else if (flipping) void runCommand(() => matchApi.flip(id, position), 'flip');
         }}
         className={`h-20 w-14 rounded-md transition sm:h-24 sm:w-16 ${
           clickable ? 'hover:-translate-y-1 hover:shadow-[0_0_16px_rgba(251,191,36,0.35)]' : ''
@@ -417,6 +429,8 @@ export default function MatchPlayPage() {
               wsConnected ? 'bg-emerald-400' : 'animate-pulse bg-rose-500'
             }`}
           />
+          {/* 快捷静音（3.9）：切换 bgm_enabled 并持久化，音量保持原值；SFX 不受影响 */}
+          <MuteButton onError={setError} />
         </div>
       </div>
 
@@ -605,7 +619,7 @@ export default function MatchPlayPage() {
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => void runCommand(() => matchApi.deal(id))}
+              onClick={() => void runCommand(() => matchApi.deal(id), 'deal')}
               disabled={!offerPhase || busy}
               className="rounded bg-emerald-600 px-6 py-2 text-sm font-bold hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
             >
@@ -623,7 +637,7 @@ export default function MatchPlayPage() {
               还价{view.counterUsed ? '（本轮已用）' : ''}
             </button>
             <button
-              onClick={() => void runCommand(() => matchApi.noDeal(id))}
+              onClick={() => void runCommand(() => matchApi.noDeal(id), 'nodeal')}
               disabled={!offerPhase || busy}
               className="rounded bg-rose-600 px-6 py-2 text-sm font-bold hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-40"
             >
@@ -653,12 +667,12 @@ export default function MatchPlayPage() {
           bankerUrl={bankerUrl}
           counterUsed={view.counterUsed}
           busy={busy}
-          onDeal={() => void runCommand(() => matchApi.deal(id))}
+          onDeal={() => void runCommand(() => matchApi.deal(id), 'deal')}
           onCounter={() => {
             setCounterError('');
             setCounterOpen(true);
           }}
-          onNoDeal={() => void runCommand(() => matchApi.noDeal(id))}
+          onNoDeal={() => void runCommand(() => matchApi.noDeal(id), 'nodeal')}
           onClose={() => setOfferModalDismissed(true)}
         />
       )}

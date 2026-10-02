@@ -17,11 +17,15 @@ import { userApi, type Overview } from '../api/user';
 import { walletApi } from '../api/wallet';
 import Layout from '../components/Layout';
 import PageHeader from '../components/PageHeader';
+import RiskPopup from '../components/RiskPopup';
+import {
+  RISK_TEXT_BAILOUT,
+  RISK_TEXT_ENTRY,
+  shouldShowBailoutReminder,
+  shouldShowEntryRisk,
+} from '../components/riskPopupText';
 import { useAuthStore } from '../store/auth';
 import { formatMoney } from '../utils/money';
-
-/** 风险提示文案（docs/开发文档.md 3.11 第 1 条，逐字） */
-const RISK_TEXT = '提示：本游戏仅为虚拟娱乐，对局存在亏损风险，入场资金输掉不予返还，请理性游玩';
 
 /**
  * /lobby —— 游戏大厅（文档 3.6.1 / 第四章）。
@@ -39,6 +43,10 @@ export default function LobbyPage() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [starting, setStarting] = useState(false);
+  /** 风险提示弹窗（3.11 触发点 1）：待确认开局的目标档位；非 null 即弹窗 */
+  const [pendingTier, setPendingTier] = useState<TierInfo | null>(null);
+  /** 风险提示弹窗（3.11 触发点 2）：第 2/3 次破产救助提醒 */
+  const [showBailoutReminder, setShowBailoutReminder] = useState(false);
   // M4：签到/任务/救助/成就（入口原为占位，现为真实逻辑；「音乐」不在本阶段，仍占位）
   const [showSignin, setShowSignin] = useState(false);
   const [signinResult, setSigninResult] = useState<SigninResult | null>(null);
@@ -135,7 +143,7 @@ export default function LobbyPage() {
     }
   }
 
-  // ---------- M4：破产救助（本阶段仅大厅入口；needsReminder 弹窗 UI 阶段 6 接入，见 api/economy.ts） ----------
+  // ---------- M4：破产救助（3.8.4；needsReminder 弹窗 UI 已在阶段 6 接入，受 risk_popup_enabled 控制） ----------
   async function onBailout() {
     if (applyingBailout) return;
     setApplyingBailout(true);
@@ -146,6 +154,10 @@ export default function LobbyPage() {
       setNotice(
         `破产救助已到账 ¥${formatMoney(res.amountFen)}，今日剩余 ${res.remaining} 次`,
       );
+      // 3.11 触发点 2：当日第 2/3 次申请（needsReminder=true）弹提醒，受全局开关控制
+      if (shouldShowBailoutReminder(res.needsReminder, riskPopupEnabled)) {
+        setShowBailoutReminder(true);
+      }
       await loadAll().catch(() => undefined);
     } catch (err) {
       setError(getErrorMessage(err));
@@ -191,12 +203,21 @@ export default function LobbyPage() {
   async function onTierClick(tier: TierInfo) {
     if (starting) return; // 双击抑制：进行中的点击直接忽略（复用同一 key 的请求仍在飞）
     if (balanceFen === null || balanceFen < tier.entryFeeFen) return; // 未解锁（按钮已置灰，双保险）
+
+    // 风险提示弹窗（3.11 触发点 1）：非取款机档（tier=1 不提示）且开关开 →
+    // 确认后才调 /api/match/start；取消留在原页不调 start。off 时跳过弹窗直接开局（逻辑等价）。
+    if (shouldShowEntryRisk(tier.tier, riskPopupEnabled)) {
+      setPendingTier(tier);
+      return;
+    }
+    await doStart(tier);
+  }
+
+  /** 真正的开局流程（风险弹窗确认后 / 无需提示时进入） */
+  async function doStart(tier: TierInfo) {
+    if (starting) return;
     setError('');
     setNotice('');
-
-    // 取款机档（tier=1，新手保底档）不弹风险提示；其余档位按设置（3.6.1/3.11）
-    // TODO(阶段 6)：window.confirm 为占位实现，届时替换为正式弹窗组件
-    if (tier.tier !== 1 && riskPopupEnabled && !window.confirm(RISK_TEXT)) return;
 
     // 重试复用同一 key：仅当上一次同档位请求的 key 已终结时才生成新 key
     if (!startKeyRef.current || startKeyRef.current.tier !== tier.tier) {
@@ -520,6 +541,28 @@ export default function LobbyPage() {
             </div>
           </div>
         </div>
+      )}
+      {/* 风险提示弹窗 · 触发点 1（3.11）：进入非取款机档位；确认才开局，取消留在原页不调 start */}
+      {pendingTier && (
+        <RiskPopup
+          message={RISK_TEXT_ENTRY}
+          cancelText="取消"
+          onConfirm={() => {
+            const tier = pendingTier;
+            setPendingTier(null);
+            void doStart(tier);
+          }}
+          onCancel={() => setPendingTier(null)}
+        />
+      )}
+
+      {/* 风险提示弹窗 · 触发点 2（3.11 / 3.8.4）：第 2/3 次破产救助提醒，仅确认按钮 */}
+      {showBailoutReminder && (
+        <RiskPopup
+          title="温馨提示"
+          message={RISK_TEXT_BAILOUT}
+          onConfirm={() => setShowBailoutReminder(false)}
+        />
       )}
     </Layout>
   );

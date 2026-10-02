@@ -23,7 +23,7 @@ function preloadImage(url: string): Promise<void> {
 /**
  * /match/load/:sessionId —— 对局加载页（docs/开发文档.md 3.4）。
  * 银行家角色（左）vs 用户角色（右）相对而立 + VS 动效；展示档位名/入场门槛/单局最高奖金；
- * 预加载角色图（音频预加载为占位，TODO 阶段 6）；「跳过」按钮；就绪后自动进对局页。
+ * 预加载角色图（音频由全局 AudioController 按路由切 loading 紧张曲，阶段 6 已接入）；「跳过」按钮；就绪后自动进对局页。
  * 进入先拉全量状态：已结算直接跳结算页（防停留脏页面）。
  */
 export default function MatchLoadPage() {
@@ -66,7 +66,7 @@ export default function MatchLoadPage() {
       setBankerUrl(banker);
       setPlayerUrl(player);
 
-      // 预加载角色图；音频预加载占位（TODO 阶段 6 接 Howler 统一管线）
+      // 预加载角色图（BGM 切曲由全局 AudioController 按路由驱动，3.9，阶段 6 已接入）
       await Promise.all([banker, player].filter((u): u is string => !!u).map(preloadImage));
       // 播完 VS 动效最短时长后自动进对局
       const elapsed = Date.now() - startedAt;

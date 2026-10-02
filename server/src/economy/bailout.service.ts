@@ -17,11 +17,9 @@ import { CLOCK, type Clock } from '../match/clock';
 import { WalletService } from '../wallet/wallet.service';
 
 /**
- * 破产救助提醒弹窗文案储备（docs/开发文档.md 3.11 第 2 条，逐字）。
- * 【阶段性延后，显式声明】3.8.4 要求「当日第 2、3 次申请时弹提醒弹窗」：
- * 本阶段 POST /api/bailout 仅返回 needsReminder 标记（第 2/3 次为 true），
- * 弹窗 UI 延后至阶段 6 统一接（与档位险情弹窗既有决策一致），届时受
- * user_settings.risk_popup_enabled 控制（默认开）。
+ * 破产救助提醒弹窗标记（docs/开发文档.md 3.11 第 2 条，逐字文案在前端 riskPopupText.ts）。
+ * POST /api/bailout 返回 needsReminder 标记（第 2/3 次为 true，文档外补充字段）；
+ * 前端阶段 6 已接入：受 user_settings.risk_popup_enabled 控制弹提醒弹窗。
  */
 export const BAILOUT_REMINDER_TEXT = '提示：您今日已经多次使用破产救助，请适当休息，注意游戏节奏';
 
@@ -33,7 +31,7 @@ export interface BailoutResultView {
   timesUsed: number;
   /** 当日剩余次数 */
   remaining: number;
-  /** 第 2/3 次申请为 true（提醒弹窗标记，UI 阶段 6 接入，受 risk_popup_enabled 控制） */
+  /** 第 2/3 次申请为 true（提醒弹窗标记，文档外补充；前端受 risk_popup_enabled 控制弹窗） */
   needsReminder: boolean;
   /** 救助后余额（分） */
   balanceFen: number;
@@ -88,7 +86,7 @@ export class BailoutService {
         refId: String(rec.id), // ref 落库（统一约束 8）
         idemKey: `bailout:${userId}:${today}:${nth}`,
       });
-      // 见文件头【阶段性延后】声明：弹窗 UI 阶段 6 接入，本阶段只回标记
+      // needsReminder：前端阶段 6 已接入弹窗 UI（受 risk_popup_enabled 控制）
       return {
         amountFen: cfg.amountFen,
         timesUsed: nth,

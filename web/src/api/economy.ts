@@ -57,9 +57,8 @@ export interface BailoutResult {
   /** 当日剩余次数 */
   remaining: number;
   /**
-   * 第 2/3 次申请为 true（3.8.4 提醒弹窗标记）。
-   * 【阶段性延后】弹窗 UI 阶段 6 统一接入（受 risk_popup_enabled 控制），
-   * 本阶段前端只展示入口，不消费本字段弹窗。
+   * 第 2/3 次申请为 true（3.8.4 提醒弹窗标记，文档外补充字段）。
+   * 阶段 6 起由前端消费：受 risk_popup_enabled 控制弹「多次破产救助」提醒（3.11 触发点 2）。
    */
   needsReminder: boolean;
   balanceFen: number;

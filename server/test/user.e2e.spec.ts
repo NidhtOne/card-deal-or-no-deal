@@ -300,8 +300,14 @@ describe('设置（3.7 / 6.2）', () => {
       riskPopupEnabled: true,
       achievementEnabled: true,
     });
-    // 曲目白名单 = assets/music/ 现有文件（占位曲目）；存储的默认值不在白名单时回退到第一首
-    expect(got.data.availableTracks).toEqual(['finale.wav', 'lobby.wav', 'match.wav']);
+    // 曲目白名单 = assets/music/ 现有音频文件（占位曲目，阶段 6 新增 loading.wav；
+    // README.md 说明文档与 sfx/ 子目录不参与白名单）；存储的默认值不在白名单时回退到第一首
+    expect(got.data.availableTracks).toEqual([
+      'finale.wav',
+      'loading.wav',
+      'lobby.wav',
+      'match.wav',
+    ]);
     expect(got.data.bgmTrack).toBe('finale.wav');
 
     // 8 字段全量更新 → 往返一致

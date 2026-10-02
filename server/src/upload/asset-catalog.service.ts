@@ -4,6 +4,11 @@ import { extname } from 'path';
 import { resolveFromRoot } from '../config/paths';
 
 const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
+/**
+ * 说明文档扩展名【文档外补充】：assets/music/README.md 等文档不参与 BGM 曲目白名单
+ * （3.9 允许增删曲目，但设置页选曲下拉不应出现说明文档）。
+ */
+const DOC_EXTS = new Set(['.md', '.txt']);
 
 /**
  * 内置资产目录扫描：
@@ -18,9 +23,14 @@ export class AssetCatalogService {
     return this.listFiles('assets/bankers', IMAGE_EXTS);
   }
 
-  /** 内置 BGM 曲目文件名列表（不限扩展名，按字典序） */
+  /**
+   * 内置 BGM 曲目文件名列表（按字典序）。
+   * 【文档外补充】排除说明文档（.md/.txt，如 assets/music/README.md）；
+   * 子目录（如 sfx/）已被 isFile 过滤，不参与白名单。
+   */
   async listMusicTracks(): Promise<string[]> {
-    return this.listFiles('assets/music', null);
+    const files = await this.listFiles('assets/music', null);
+    return files.filter((name) => !DOC_EXTS.has(extname(name).toLowerCase()));
   }
 
   private async listFiles(dir: string, exts: Set<string> | null): Promise<string[]> {

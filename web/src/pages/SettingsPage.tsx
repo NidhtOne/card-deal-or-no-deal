@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getErrorMessage } from '../api/client';
+import { useAudioStore } from '../audio/audioStore';
 import { Settings, userApi } from '../api/user';
 import Layout from '../components/Layout';
 import PageHeader from '../components/PageHeader';
@@ -8,7 +9,7 @@ type EditableSettings = Omit<Settings, 'availableTracks'>;
 
 /**
  * /settings —— 设置页（文档 3.7 / 第四章）：8 个设置项 UI 并持久化。
- * 音乐播放与风险提示弹窗的实际联动在后续阶段接入，本阶段只做读取与保存。
+ * 阶段 6 起保存后同步 AudioManager（音乐/音量即时生效，3.9）；风险弹窗开关由各触发点消费（3.11）。
  */
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -16,6 +17,7 @@ export default function SettingsPage() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const refreshAudio = useAudioStore((s) => s.refresh);
 
   const reload = useCallback(async () => {
     const s = await userApi.getSettings();
@@ -49,6 +51,8 @@ export default function SettingsPage() {
     try {
       const saved = await userApi.updateSettings(form);
       setSettings(saved);
+      // 阶段 6 生效闭环：保存后立即同步音频（开关/选曲/音量实时生效，3.9）
+      await refreshAudio();
       setMessage('设置已保存');
     } catch (err) {
       setError(getErrorMessage(err));
@@ -140,7 +144,7 @@ export default function SettingsPage() {
           </button>
         </div>
         <p className="mt-4 text-xs text-slate-600">
-          音乐播放、音效与风险提示弹窗的实际联动将在对局阶段接入，本页面设置已实时持久化。
+          音乐/音效开关、曲目与音量保存后即时生效；风险提示弹窗开关由各触发点实时读取。
         </p>
       </div>
     </Layout>
