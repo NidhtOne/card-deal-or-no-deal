@@ -5,11 +5,14 @@ import { Settings, userApi } from '../api/user';
 import Layout from '../components/Layout';
 import PageHeader from '../components/PageHeader';
 
-type EditableSettings = Omit<Settings, 'availableTracks'>;
+type EditableSettings = Omit<Settings, 'availableTracks' | 'historyRetentionOptionsDays'>;
 
 /**
  * /settings —— 设置页（文档 3.7 / 第四章）：8 个设置项 UI 并持久化。
  * 阶段 6 起保存后同步 AudioManager（音乐/音量即时生效，3.9）；风险弹窗开关由各触发点消费（3.11）。
+ * M8【文档外补充：2026-10-03 人工决策落地】：新增「对局历史保留时长」下拉，
+ * 选项从服务端 Settings.historyRetentionOptionsDays 渲染（铁律 7：禁止前端硬编码数值），
+ * 文案从选项映射（0=永久保留，其余为「N 天」）。
  */
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -31,6 +34,7 @@ export default function SettingsPage() {
       amountListEnabled: s.amountListEnabled,
       riskPopupEnabled: s.riskPopupEnabled,
       achievementEnabled: s.achievementEnabled,
+      historyRetentionDays: s.historyRetentionDays,
     });
   }, []);
 
@@ -132,6 +136,27 @@ export default function SettingsPage() {
             checked={form.achievementEnabled}
             onChange={(v) => patch('achievementEnabled', v)}
           />
+          {/* M8【文档外补充：2026-10-03 人工决策落地】对局历史保留时长（文档外新增设置项） */}
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <span className="text-sm text-slate-300">对局历史保留时长</span>
+              <p className="mt-0.5 text-xs text-slate-600">
+                过期对局记录自动清理，资金流水永久保留；永久保留则不清理
+              </p>
+            </div>
+            <select
+              aria-label="对局历史保留时长"
+              value={form.historyRetentionDays}
+              onChange={(e) => patch('historyRetentionDays', Number(e.target.value))}
+              className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm outline-none focus:border-amber-400"
+            >
+              {settings.historyRetentionOptionsDays.map((days) => (
+                <option key={days} value={days}>
+                  {retentionLabel(days)}
+                </option>
+              ))}
+            </select>
+          </div>
 
           {error && <p className="text-sm text-rose-400">{error}</p>}
           {message && <p className="text-sm text-emerald-400">{message}</p>}
@@ -149,6 +174,11 @@ export default function SettingsPage() {
       </div>
     </Layout>
   );
+}
+
+/** 保留时长选项文案【文档外补充】（文案从选项映射，0=永久保留） */
+function retentionLabel(days: number): string {
+  return days === 0 ? '永久保留' : `${days} 天`;
 }
 
 function Toggle({

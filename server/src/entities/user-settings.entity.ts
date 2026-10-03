@@ -43,4 +43,12 @@ export class UserSettings {
   /** 成就系统开关（默认开） */
   @Column({ name: 'achievement_enabled', type: 'boolean', default: true })
   achievementEnabled!: boolean;
+
+  /**
+   * 对局历史保留天数（0=永久保留，默认 0）【文档外补充：2026-10-03 人工决策落地】。
+   * DEFAULT 0 保证存量用户行为不变（永久保留）；合法值白名单 =
+   * economy.json history.retention_options_days（PUT 校验，非法 400）。
+   */
+  @Column({ name: 'history_retention_days', default: 0 })
+  historyRetentionDays!: number;
 }

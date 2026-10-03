@@ -100,10 +100,23 @@ export function buildPlayerView(
     settlement: snapshot.settlement
       ? {
           reason: snapshot.settlement.reason,
-          prizeFen: snapshot.settlement.prizeFen,
-          profitFen: snapshot.settlement.profitFen,
-          taxFen: snapshot.settlement.taxFen,
-          netFen: snapshot.settlement.netFen,
+          // M8【文档外补充：2026-10-03 人工决策落地】：已落库结算（final_bonus 非空）时
+          // 展示 DB 权威值（连胜冻结截断后即为截断后金额，决策要求「前端展示截断后金额
+          // 即可、不做冻结状态专门展示」）；功能关闭时两者恒相等，展示零变化。
+          // 结算事务提交前的窗口期（final_bonus 尚未落库）回退引擎快照值。
+          ...(row.finalBonus != null && row.finalBonus !== undefined
+            ? {
+                prizeFen: row.finalBonus,
+                profitFen: row.finalBonus - row.entryFee,
+                taxFen: row.tax ?? 0,
+                netFen: row.finalBonus - (row.tax ?? 0),
+              }
+            : {
+                prizeFen: snapshot.settlement.prizeFen,
+                profitFen: snapshot.settlement.profitFen,
+                taxFen: snapshot.settlement.taxFen,
+                netFen: snapshot.settlement.netFen,
+              }),
         }
       : null,
     settledBalanceFen: row.settledBalance ?? null,

@@ -95,11 +95,48 @@ export interface AchievementDefConfig {
   games: number | null;
 }
 
+/**
+ * 连胜盈利冻结机制（win_streak_guard）【文档外补充：2026-10-03 人工决策落地】。
+ * 与「元」书写惯例不同（任务书硬性要求 1）：本段参数直接以最终存储单位表达，不做换算，
+ * 注释标注避免歧义：
+ * - trigger_profit_fen：连续盈利段税后净利累计和达到该值触发冻结（分）；
+ * - keep_ratio_bp：冻结期间盈利局保留利润的整数万分比（5000 = 50%）；
+ * - cap_fen：冻结期间单局入账利润封顶（分）；
+ * - reset_hours：自触发时刻起 N 小时后自动解冻（整数小时，判定点=结算时）。
+ * enabled=false 时四项可为 null 且不校验（功能关闭=结算逻辑零改动）；
+ * enabled=true 时四项必须为非 null 正整数，否则启动直接 throw。
+ */
+export interface WinStreakGuardConfig {
+  /** 功能总开关 */
+  enabled: boolean;
+  /** 触发阈值：连续盈利段税后净利累计和（分） */
+  triggerProfitFen: number | null;
+  /** 冻结期间保留利润比例（整数万分比，10000 = 100%） */
+  keepRatioBp: number | null;
+  /** 冻结期间单局入账利润封顶（分） */
+  capFen: number | null;
+  /** 触发后 N 小时自动解冻（整数小时） */
+  resetHours: number | null;
+}
+
+/**
+ * 对局历史过期清理【文档外补充：2026-10-03 人工决策落地】：
+ * retention_options_days = 设置页可选保留天数白名单（整数天，0=永久保留），
+ * user_settings.history_retention_days 必须落在此白名单内。
+ */
+export interface HistoryRetentionConfig {
+  retentionOptionsDays: number[];
+}
+
 export interface EconomyExtConfig {
   signin: SigninConfig;
   tasks: TaskDefConfig[];
   bailout: BailoutConfig;
   achievements: AchievementDefConfig[];
+  /** M8：连胜盈利冻结机制（文档外补充） */
+  winStreakGuard: WinStreakGuardConfig;
+  /** M8：历史清理保留选项（文档外补充） */
+  history: HistoryRetentionConfig;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -206,8 +243,54 @@ function parseAchievements(raw: unknown): AchievementDefConfig[] {
   });
 }
 
+/** win_streak_guard 段解析【文档外补充：2026-10-03 人工决策落地】（见 WinStreakGuardConfig 注释） */
+function parseWinStreakGuard(raw: unknown): WinStreakGuardConfig {
+  const rec = isRecord(raw) ? raw : fail('win_streak_guard 必须是对象');
+  const enabled = rec.enabled;
+  if (typeof enabled !== 'boolean') fail('win_streak_guard.enabled 必须是布尔值');
+  if (!enabled) {
+    // 功能关闭：数值不校验（可为 null），结算逻辑零改动
+    return {
+      enabled,
+      triggerProfitFen: null,
+      keepRatioBp: null,
+      capFen: null,
+      resetHours: null,
+    };
+  }
+  // 功能开启：四项必须为非 null 正整数（金额/万分比/小时均不换算，直接存储，注释见上）
+  return {
+    enabled,
+    triggerProfitFen: reqPosInt(rec.trigger_profit_fen, 'win_streak_guard.trigger_profit_fen'),
+    keepRatioBp: reqPosInt(rec.keep_ratio_bp, 'win_streak_guard.keep_ratio_bp'),
+    capFen: reqPosInt(rec.cap_fen, 'win_streak_guard.cap_fen'),
+    resetHours: reqPosInt(rec.reset_hours, 'win_streak_guard.reset_hours'),
+  };
+}
+
+/** history 段解析【文档外补充：2026-10-03 人工决策落地】：保留天数白名单（非负整数、非空） */
+function parseHistoryRetention(raw: unknown): HistoryRetentionConfig {
+  const rec = isRecord(raw) ? raw : fail('history 必须是对象');
+  if (!Array.isArray(rec.retention_options_days) || rec.retention_options_days.length === 0) {
+    fail('history.retention_options_days 必须是非空数组');
+  }
+  const seen = new Set<number>();
+  return {
+    retentionOptionsDays: (rec.retention_options_days as unknown[]).map((v, i) => {
+      const path = `history.retention_options_days[${i}]`;
+      if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) {
+        fail(`${path} 必须是非负整数（0=永久保留）`);
+      }
+      if (seen.has(v)) fail(`${path} 重复：${v}`);
+      seen.add(v);
+      return v;
+    }),
+  };
+}
+
 /**
- * 解析 M4 经济扩展段（signin/tasks/bailout/achievements）。纯函数，输入原始 JSON。
+ * 解析 M4 经济扩展段（signin/tasks/bailout/achievements + M8 win_streak_guard/history）。
+ * 纯函数，输入原始 JSON。
  * 与引擎 parseEconomyConfig 互补：引擎只消费 tax，此处消费 3.8.2–3.8.5 扩展段；
  * 非法配置抛错（getGameRawConfigs 处 fail fast，拒绝启动）。
  */
@@ -218,6 +301,8 @@ export function parseEconomyExt(raw: unknown): EconomyExtConfig {
     tasks: parseTasks(rec.tasks),
     bailout: parseBailout(rec.bailout),
     achievements: parseAchievements(rec.achievements),
+    winStreakGuard: parseWinStreakGuard(rec.win_streak_guard),
+    history: parseHistoryRetention(rec.history),
   };
 }
 
@@ -235,4 +320,14 @@ export function getEconomyExt(): EconomyExtConfig {
 export function resetEconomyConfigCache(): void {
   cached = null;
   cachedExt = null;
+}
+
+/**
+ * 测试专用：整体替换 M4+ 扩展配置缓存【文档外补充：2026-10-03 人工决策落地】。
+ * 用途：win_streak_guard 单测/集成测试注入测试内 fixture 值（任务书硬性要求 3：
+ * 禁止把测试数值写进 config/economy.json，单元测试用测试内注入的 fixture 值）。
+ * 禁止生产代码调用；调用后请用例结束恢复原配置，避免泄漏到其他用例。
+ */
+export function setEconomyExtCacheForTest(cfg: EconomyExtConfig | null): void {
+  cachedExt = cfg;
 }

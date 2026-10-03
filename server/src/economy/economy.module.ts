@@ -7,6 +7,8 @@ import { DailySignin } from '../entities/daily-signin.entity';
 import { DailyTask } from '../entities/daily-task.entity';
 import { FundFlow } from '../entities/fund-flow.entity';
 import { GameSession } from '../entities/game-session.entity';
+// M8：成就计数器表【文档外补充：2026-10-03 人工决策落地】
+import { UserGameState } from '../entities/user-game-state.entity';
 import { UserAchievement } from '../entities/user-achievement.entity';
 import { UserSettings } from '../entities/user-settings.entity';
 import { UserTaskProgress } from '../entities/user-task-progress.entity';
@@ -43,6 +45,7 @@ import { TasksService } from './tasks.service';
       UserWallet,
       FundFlow,
       GameSession,
+      UserGameState,
     ]),
     AuthModule,
     MatchModule, // CLOCK（注入时钟）+ GameSessionService 复用

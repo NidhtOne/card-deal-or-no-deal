@@ -5,6 +5,8 @@ import { FundFlow } from '../entities/fund-flow.entity';
 import { GameCard } from '../entities/game-card.entity';
 import { GameSession } from '../entities/game-session.entity';
 import { Offer } from '../entities/offer.entity';
+// M8：连胜盈利冻结机制计数器表【文档外补充：2026-10-03 人工决策落地】
+import { UserGameState } from '../entities/user-game-state.entity';
 import { UserSettings } from '../entities/user-settings.entity';
 import { UserWallet } from '../entities/user-wallet.entity';
 import { WalletModule } from '../wallet/wallet.module';
@@ -19,7 +21,15 @@ import { GameGateway } from './match.gateway';
  */
 @Module({
   imports: [
-    TypeOrmModule.forFeature([GameSession, GameCard, Offer, UserSettings, UserWallet, FundFlow]),
+    TypeOrmModule.forFeature([
+      GameSession,
+      GameCard,
+      Offer,
+      UserSettings,
+      UserWallet,
+      FundFlow,
+      UserGameState,
+    ]),
     AuthModule,
     WalletModule,
   ],

@@ -11,7 +11,9 @@ import { DataSource, EntityManager } from 'typeorm';
 import { runInTransaction } from '../common/transaction';
 import { getEconomyExt, type AchievementDefConfig } from '../config/economy';
 import { Achievement } from '../entities/achievement.entity';
-import { FundFlow, FundFlowType } from '../entities/fund-flow.entity';import { UserAchievement } from '../entities/user-achievement.entity';
+import { FundFlow, FundFlowType } from '../entities/fund-flow.entity';
+import { UserGameState } from '../entities/user-game-state.entity';
+import { UserAchievement } from '../entities/user-achievement.entity';
 import { UserSettings } from '../entities/user-settings.entity';
 import { CLOCK, type Clock } from '../match/clock';
 import type { MatchSettledPayload } from '../match/match-events';
@@ -78,10 +80,14 @@ export interface ClaimAchievementView {
  * a. 全部成就判定在对局结算事件（match_settled，含 3.6.8 超时托管结算路径）统一执行；
  * b. 「完成/累计」口径：对局进入结算状态即算 1 局（初出茅庐/勤劳玩家），含托管局；
  * c. 「盈利」口径：net_profit > 0；保本（=0）不算盈利也不算亏损；亏损 < 0；
- * d. 连胜猎手（口径冻结，文档未定义，待人工最终确认）：「保本截断」——从最新结算向
- *    历史按 finished_at 倒序追溯，盈利 +1，遇 net_profit ≤ 0（含保本）即停止；保本局
- *    不计入连胜长度、也不归零其前段（分段子段保留，例：「盈、保本、盈×4」当前连胜为
- *    4，不解锁）；亏损局同样终止追溯，此后再盈×5 重新解锁。实时查询推导，不新增持久化字段；
+ * d. 连胜猎手【M8 改版，文档外补充：2026-10-03 人工决策落地】：改读
+ *    user_game_state.win_streak 计数器（结算事务内维护：盈利 +1、亏损清零、保本
+ *    「不中断不计入」不变 —— 与 M8 任务书 §8d 钦定口径一致），判定 win_streak ≥ streak
+ *    阈值（阈值仍在 economy.json achievements 段不动）。不再回扫 game_sessions
+ *    （历史过期清理会物理删行，回扫口径失效，故解耦）；
+ * b'. 初出茅庐/勤劳玩家同样改读 user_game_state.total_settled_games（含超时托管
+ *    结算局，口径不变）；计数器在结算事务内先行更新、再发 match_settled 事件判
+ *    成就（顺序依赖：本服务读到的一定是含本局的最新值）；
  * e. 东山再起：存在任一已救助流水（fund_flows type=救助）后，其后结算的第一局
  *    盈利对局即解锁；资格持久，亏损局不重置 —— 文档未定义，按此口径实现；
  * f. achievement_enabled=off：不弹窗不展示，后台判定与待领取记录照常累计，
@@ -221,29 +227,26 @@ export class AchievementsService implements OnModuleInit {
       if (hasBailout) await unlock(ACH.COMEBACK);
     }
 
-    // 连胜猎手 / 勤劳玩家：按 user_id + finished_at 倒序读结算记录（含本局，结算已提交后发事件）
-    const history = (await manager.query(
-      `SELECT net_profit FROM "game_sessions"
-       WHERE user_id = ? AND finished_at IS NOT NULL
-       ORDER BY finished_at DESC, id DESC`,
-      [userId],
-    )) as { net_profit: number | null }[];
+    // M8【文档外补充：2026-10-03 人工决策落地】：连胜猎手/初出茅庐/勤劳玩家改读
+    // user_game_state 计数器（结算事务先行更新，顺序依赖见类注释 d/b'）；
+    // 不再回扫 game_sessions —— 历史过期清理（HistoryService.purgeExpired）会
+    // 物理删除行，回扫口径会被破坏，故必须解耦。无行（未结算过任何局）视为全 0。
+    const stateRow = await manager.findOne(UserGameState, { where: { userId } });
+    const winStreak = stateRow?.winStreak ?? 0;
+    const totalSettledGames = stateRow?.totalSettledGames ?? 0;
 
-    // 连胜猎手（口径 d，文档外补充 + 待人工确认）：盈利 +1；亏损中断清零；
-    // 保本（net_profit=0）「不中断但不算连胜」——倒序推导时停在本段首个非盈利局
-    // （保本会截断向更早局延伸的连胜段，故「盈/保本/盈×4」序列 = 当前连胜 4，不解锁）。
-    let streak = 0;
-    for (const row of history) {
-      const net = row.net_profit ?? 0;
-      if (net > 0) streak += 1;
-      else break; // 保本/亏损均终止向更早局追溯
+    // 初出茅庐：累计结算局数 ≥ 1（含托管局，口径 b'）
+    if (totalSettledGames >= 1) {
+      await unlock(ACH.FIRST_MATCH);
     }
-    if (streak >= this.def(ACH.WIN_STREAK).streak!) {
+
+    // 连胜猎手：win_streak ≥ streak 阈值（口径 d）
+    if (winStreak >= this.def(ACH.WIN_STREAK).streak!) {
       await unlock(ACH.WIN_STREAK);
     }
 
-    // 勤劳玩家（口径 b）：累计结算局数（含超时托管局 = finished_at 非空即计数）
-    if (history.length >= this.def(ACH.HUNDRED_GAMES).games!) {
+    // 勤劳玩家：累计结算局数 ≥ games 阈值（口径 b'）
+    if (totalSettledGames >= this.def(ACH.HUNDRED_GAMES).games!) {
       await unlock(ACH.HUNDRED_GAMES);
     }
 

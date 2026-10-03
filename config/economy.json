@@ -35,8 +35,20 @@
     "amount": 500,
     "max_per_day": 3
   },
+  "win_streak_guard": {
+    "_comment": "连胜盈利冻结机制【文档外补充：2026-10-03 人工决策落地】。注意本段数值与惯例不同：金额直接以「分」（trigger_profit_fen/cap_fen）、比例为整数万分比（keep_ratio_bp，5000=50%）、时长为整数小时（reset_hours）存储，不做元转分换算，避免换算歧义。enabled=true 时四项必须为非空正整数，非法拒绝启动；enabled=false 时数值不校验、结算逻辑零改动。语义：trigger_profit_fen=连续盈利段税后净利累计和达到该值触发冻结（触发对本局之后的下一局生效）；keep_ratio_bp=冻结期间盈利局保留利润的整数万分比；cap_fen=冻结期间单局入账利润封顶（分）；reset_hours=自触发时刻起 N 小时后自动解冻（判定点=结算时，到期首局不截断）；解冻另含「输一局解除」。数值由人工后续填入，改 JSON 即生效（铁律 7）。",
+    "enabled": false,
+    "trigger_profit_fen": null,
+    "keep_ratio_bp": null,
+    "cap_fen": null,
+    "reset_hours": null
+  },
+  "history": {
+    "_comment": "对局历史过期清理【文档外补充：2026-10-03 人工决策落地】。retention_options_days=设置页可选保留天数白名单（整数天，0=永久保留；user_settings.history_retention_days 必须落在此白名单内，不在即 PUT 400）。此数组为建议值，数值待人工确认。",
+    "retention_options_days": [0, 7, 30, 90, 365]
+  },
   "achievements": {
-    "_comment": "成就系统（docs/开发文档.md 3.8.5，一次性解锁，受 user_settings.achievement_enabled 总开关）：prize_threshold=单局税前奖金门槛（元，百万梦想）；streak=连续盈利局数（连胜猎手，口径冻结【文档未定义，待人工最终确认】：保本截断——保本局不计入连胜也不归零前段，追溯遇 net_profit≤0 即停）；games=累计完成局数（勤劳玩家，含超时托管结算局）。博弈到底仅终局换牌（swap）结算解锁。",
+    "_comment": "成就系统（docs/开发文档.md 3.8.5，一次性解锁，受 user_settings.achievement_enabled 总开关）：prize_threshold=单局税前奖金门槛（元，百万梦想）；streak=连续盈利局数（连胜猎手；M8【文档外补充：2026-10-03 人工决策落地】改读 user_game_state.win_streak 计数器，口径「保本不中断不计入」：盈利 +1、亏损清零、保本不变）；games=累计完成局数（勤劳玩家，含超时托管结算局；M8 改读 user_game_state.total_settled_games）。博弈到底仅终局换牌（swap）结算解锁。",
     "list": [
       { "code": "first_match", "name": "初出茅庐", "reward": 150 },
       { "code": "million_dream", "name": "百万梦想", "reward": 800, "prize_threshold": 1000000 },

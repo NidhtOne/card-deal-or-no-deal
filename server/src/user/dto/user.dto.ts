@@ -46,6 +46,8 @@ export class UpdateProfileDto {
 /**
  * 更新设置（6.2 PUT /api/user/settings）：3.7 的 8 个设置字段，均可选（部分更新）。
  * volume / sfx_volume 校验 0-100 整数；bgm_track 白名单（assets/music/ 目录现有文件）由服务端判定。
+ * history_retention_days【文档外补充：2026-10-03 人工决策落地】：0=永久保留，
+ * 合法值白名单 = economy.json history.retention_options_days，由服务端再校验。
  */
 export class UpdateSettingsDto {
   @IsOptional()
@@ -83,6 +85,12 @@ export class UpdateSettingsDto {
   @IsOptional()
   @IsBoolean()
   achievementEnabled?: boolean;
+
+  /** 对局历史保留天数【文档外补充】；0=永久保留，白名单由服务端校验 */
+  @IsOptional()
+  @IsInt({ message: '对局历史保留天数需为非负整数' })
+  @Min(0, { message: '对局历史保留天数需为非负整数' })
+  historyRetentionDays?: number;
 }
 
 /** 「选择内置」银行家（6.2 POST /api/user/banker-character 的 JSON 模式）：传 assets/bankers/ 下文件名 */

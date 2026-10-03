@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getErrorMessage } from '../api/client';
-import { HistoryItem, HistoryList, HistoryResultFilter, HistoryStats, historyApi } from '../api/history';
+import { HistoryList, HistoryResultFilter, HistoryStats, historyApi } from '../api/history';
 import { matchApi, type TierInfo } from '../api/match';
 import Layout from '../components/Layout';
 import PageHeader from '../components/PageHeader';
@@ -9,8 +9,11 @@ import { formatMoney, formatSignedMoney } from '../utils/money';
 /**
  * /history —— 对决历史（docs/开发文档.md 3.10 / 第四章：列表 + 筛选 + 统计面板）。
  * - 顶部统计面板 6 项（GET /api/history/stats）；0 局时全部展示 0，不报错（空态口径）；
- * - 列表 7 字段（3.10 逐字），按服务端 finished_at 倒序；
- * - 双筛选（档位/结果）联动重新查询；分页 page 从 1 起；
+ * - M8【文档外补充：2026-10-03 人工决策落地】列表仅保留 3 列：对局时间、输赢金额、
+ *   对局结果（盈利/亏损/保本）——人工决策限定「列表展示字段」，其余列（档位/入场消耗/
+ *   最终金额/税额）移除【口径钦定，待人工过目】；既有「档位/结果」筛选器与顶部统计卡
+ *   为开发文档 3.10 既有功能，保留不动【待人工过目】；
+ * - sessionId 仅为行 key；分页与 API 契约不动（只改展示层）；
  * - 本阶段不做「详情展开/过程摘要」：过程明细（翻牌/报价序列）暂无持久化数据源，
  *   知识库未定义，待人工决策后另行排期（禁止脑补表结构）。
  */
@@ -67,6 +70,13 @@ export default function HistoryPage() {
   const tierName = useCallback(
     (tier: number) => tiers?.find((t) => t.tier === tier)?.name ?? `档位 ${tier}`,
     [tiers],
+  );
+
+  /** 对局结果列（盈利/亏损/保本）：从输赢金额推导【文档外补充：2026-10-03 人工决策落地】 */
+  const outcomeLabel = useCallback(
+    (netProfitFen: number) =>
+      netProfitFen > 0 ? '盈利' : netProfitFen < 0 ? '亏损' : '保本',
+    [],
   );
 
   function onTierChange(value: number | '') {
@@ -168,34 +178,49 @@ export default function HistoryPage() {
           {loading && <span className="text-xs text-slate-500">查询中…</span>}
         </section>
 
-        {/* 列表（3.10 七字段） */}
+        {/* 列表（M8 精简为 3 列：对局时间 / 输赢金额 / 对局结果） */}
         <section className="overflow-x-auto rounded-xl border border-slate-800">
-          <table className="w-full min-w-[720px] text-sm">
+          <table className="w-full min-w-[480px] text-sm">
             <thead>
               <tr className="bg-slate-900/80 text-left text-xs text-slate-500">
                 <th className="px-4 py-3">对局时间</th>
-                <th className="px-4 py-3">档位</th>
-                <th className="px-4 py-3">入场消耗</th>
-                <th className="px-4 py-3">结果</th>
-                <th className="px-4 py-3">最终报价 / 开牌奖金</th>
-                <th className="px-4 py-3">税额</th>
-                <th className="px-4 py-3">实际盈亏</th>
+                <th className="px-4 py-3">输赢金额</th>
+                <th className="px-4 py-3">对局结果</th>
               </tr>
             </thead>
             <tbody>
               {list?.items.map((item) => (
-                <HistoryRow key={item.sessionId} item={item} tierName={tierName(item.tier)} />
+                <tr
+                  key={item.sessionId}
+                  className="border-t border-slate-800 bg-slate-950/40"
+                >
+                  <td className="px-4 py-3 font-mono text-xs text-slate-400">
+                    {item.matchedAt}
+                  </td>
+                  <td
+                    className={`px-4 py-3 font-semibold ${
+                      item.netProfitFen > 0
+                        ? 'text-emerald-300'
+                        : item.netProfitFen < 0
+                          ? 'text-rose-400'
+                          : 'text-slate-300'
+                    }`}
+                  >
+                    {formatSignedMoney(item.netProfitFen)} 元
+                  </td>
+                  <td className="px-4 py-3 text-slate-300">{outcomeLabel(item.netProfitFen)}</td>
+                </tr>
               ))}
               {list && list.items.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={3} className="px-4 py-10 text-center text-slate-500">
                     暂无对局记录 —— 去大厅开局一局吧
                   </td>
                 </tr>
               )}
               {!list && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={3} className="px-4 py-10 text-center text-slate-500">
                     加载中…
                   </td>
                 </tr>
@@ -233,24 +258,7 @@ export default function HistoryPage() {
   );
 }
 
-/** 单行（7 字段逐字口径；实际盈亏按正负着色） */
-function HistoryRow({ item, tierName }: { item: HistoryItem; tierName: string }) {
-  const profitColor =
-    item.netProfitFen > 0 ? 'text-emerald-300' : item.netProfitFen < 0 ? 'text-rose-400' : 'text-slate-300';
-  return (
-    <tr className="border-t border-slate-800 bg-slate-950/40">
-      <td className="px-4 py-3 font-mono text-xs text-slate-400">{item.matchedAt}</td>
-      <td className="px-4 py-3 text-slate-200">{tierName}</td>
-      <td className="px-4 py-3 text-slate-300">¥{formatMoney(item.entryFeeFen)}</td>
-      <td className="px-4 py-3 text-slate-300">{item.outcome}</td>
-      <td className="px-4 py-3 font-semibold text-amber-300">¥{formatMoney(item.finalAmountFen)}</td>
-      <td className="px-4 py-3 text-slate-400">¥{formatMoney(item.taxFen)}</td>
-      <td className={`px-4 py-3 font-semibold ${profitColor}`}>
-        {formatSignedMoney(item.netProfitFen)} 元
-      </td>
-    </tr>
-  );
-}
+/** M8【文档外补充】：旧 7 字段行组件已按人工决策移除，列表仅保留 3 列。 */
 
 function StatCard({
   label,

@@ -31,7 +31,7 @@ export interface Overview {
   winRate: number;
 }
 
-/** GET /api/user/settings 返回结构（3.7 的 8 个设置字段 + 曲目白名单） */
+/** GET /api/user/settings 返回结构（3.7 的 8 个设置字段 + 曲目白名单 + 历史保留选项） */
 export interface Settings {
   bgmEnabled: boolean;
   bgmTrack: string;
@@ -42,9 +42,17 @@ export interface Settings {
   riskPopupEnabled: boolean;
   achievementEnabled: boolean;
   availableTracks: string[];
+  /**
+   * 对局历史保留天数（0=永久保留）【文档外补充：2026-10-03 人工决策落地】；
+   * 可选值白名单来自服务端 economy.json，前端禁止硬编码数值（铁律 7 延伸）。
+   */
+  historyRetentionDays: number;
+  historyRetentionOptionsDays: number[];
 }
 
-export type UpdateSettingsPayload = Partial<Omit<Settings, 'availableTracks'>>;
+export type UpdateSettingsPayload = Partial<
+  Omit<Settings, 'availableTracks' | 'historyRetentionOptionsDays'>
+>;
 
 /** GET /api/user/character/history 返回结构（文档外补充） */
 export interface CharacterHistory {

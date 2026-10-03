@@ -340,6 +340,43 @@ describe('设置（3.7 / 6.2）', () => {
       200,
     );
   });
+
+  // M8-fix1【文档外补充：2026-10-03 人工决策落地】
+  it('historyRetentionDays：白名单校验、配置回显与 DTO 整数/类型校验', async () => {
+    const reg = await registerUser(uniq('ret'));
+    const access = reg.data.accessToken as string;
+
+    const outside = await api(
+      'PUT',
+      '/user/settings',
+      { historyRetentionDays: 5 },
+      access,
+    );
+    expect(outside.status).toBe(400);
+    expect(JSON.stringify(outside.data)).toContain('0/7/30/90/365');
+
+    const updated = await api(
+      'PUT',
+      '/user/settings',
+      { historyRetentionDays: 30 },
+      access,
+    );
+    expect(updated.status).toBe(200);
+    expect(updated.data.historyRetentionDays).toBe(30);
+    expect(updated.data.historyRetentionOptionsDays).toEqual([0, 7, 30, 90, 365]);
+
+    const got = await api('GET', '/user/settings', undefined, access);
+    expect(got.status).toBe(200);
+    expect(got.data.historyRetentionDays).toBe(30);
+    expect(got.data.historyRetentionOptionsDays).toEqual([0, 7, 30, 90, 365]);
+
+    expect(
+      (await api('PUT', '/user/settings', { historyRetentionDays: 7.5 }, access)).status,
+    ).toBe(400);
+    expect(
+      (await api('PUT', '/user/settings', { historyRetentionDays: '7' }, access)).status,
+    ).toBe(400);
+  });
 });
 
 describe('头像上传（3.2；附录 A：用户头像与角色图均由用户自行上传——头像部分）', () => {

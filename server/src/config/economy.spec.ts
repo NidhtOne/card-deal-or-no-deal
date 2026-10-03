@@ -32,6 +32,15 @@ function validSample(): Record<string, unknown> {
         { code: 'hundred_games', name: '勤劳玩家', reward: 600, games: 100 },
       ],
     },
+    // M8【文档外补充：2026-10-03 人工决策落地】：默认关闭（数值 null 合法）
+    win_streak_guard: {
+      enabled: false,
+      trigger_profit_fen: null,
+      keep_ratio_bp: null,
+      cap_fen: null,
+      reset_hours: null,
+    },
+    history: { retention_options_days: [0, 7, 30, 90, 365] },
   };
 }
 
@@ -45,6 +54,122 @@ describe('parseEconomyExt：合法样本解析（元转分）', () => {
     expect(cfg.achievements[1].prizeThresholdFen).toBe(100000000);
     expect(cfg.achievements[2].streak).toBe(5);
     expect(cfg.achievements[3].games).toBe(100);
+    // M8：win_streak_guard 默认关闭（数值清为 null，结算零改动）
+    expect(cfg.winStreakGuard).toEqual({
+      enabled: false,
+      triggerProfitFen: null,
+      keepRatioBp: null,
+      capFen: null,
+      resetHours: null,
+    });
+    expect(cfg.history.retentionOptionsDays).toEqual([0, 7, 30, 90, 365]);
+  });
+});
+
+describe('parseEconomyExt：win_streak_guard 段【文档外补充：2026-10-03 人工决策落地】', () => {
+  it('enabled=true 时四项非 null 正整数 → 解析成功（金额/万分比/小时不做换算，直接存储）', () => {
+    const s = validSample();
+    s.win_streak_guard = {
+      enabled: true,
+      trigger_profit_fen: 500000,
+      keep_ratio_bp: 5000,
+      cap_fen: 100000,
+      reset_hours: 24,
+    };
+    const cfg = parseEconomyExt(s);
+    expect(cfg.winStreakGuard).toEqual({
+      enabled: true,
+      triggerProfitFen: 500000, // 不做元转分（任务书硬性要求 1：避免换算歧义）
+      keepRatioBp: 5000,
+      capFen: 100000,
+      resetHours: 24,
+    });
+  });
+
+  it('enabled=true 且任一项 null → 拒绝（启动 fail fast）', () => {
+    for (const key of ['trigger_profit_fen', 'keep_ratio_bp', 'cap_fen', 'reset_hours']) {
+      const s = validSample();
+      s.win_streak_guard = {
+        enabled: true,
+        trigger_profit_fen: 500000,
+        keep_ratio_bp: 5000,
+        cap_fen: 100000,
+        reset_hours: 24,
+      };
+      (s.win_streak_guard as Record<string, unknown>)[key] = null;
+      expect(() => parseEconomyExt(s)).toThrow(new RegExp(key));
+    }
+  });
+
+  it('enabled=true 且任一项非正整数（0/负数/小数/字符串）→ 拒绝', () => {
+    for (const bad of [0, -1, 1.5, '10']) {
+      for (const key of ['trigger_profit_fen', 'keep_ratio_bp', 'cap_fen', 'reset_hours']) {
+        const s = validSample();
+        s.win_streak_guard = {
+          enabled: true,
+          trigger_profit_fen: 500000,
+          keep_ratio_bp: 5000,
+          cap_fen: 100000,
+          reset_hours: 24,
+        };
+        (s.win_streak_guard as Record<string, unknown>)[key] = bad;
+        expect(() => parseEconomyExt(s)).toThrow();
+      }
+    }
+  });
+
+  it('enabled=false 时数值不校验（乱填也不报错）且解析结果数值为 null（结算零改动）', () => {
+    const s = validSample();
+    s.win_streak_guard = {
+      enabled: false,
+      trigger_profit_fen: -5,
+      keep_ratio_bp: 0,
+      cap_fen: null,
+      reset_hours: 1.5,
+    };
+    const cfg = parseEconomyExt(s);
+    expect(cfg.winStreakGuard.enabled).toBe(false);
+    expect(cfg.winStreakGuard.triggerProfitFen).toBeNull();
+    expect(cfg.winStreakGuard.keepRatioBp).toBeNull();
+    expect(cfg.winStreakGuard.capFen).toBeNull();
+    expect(cfg.winStreakGuard.resetHours).toBeNull();
+  });
+
+  it('enabled 缺失或非布尔 → 拒绝', () => {
+    const s = validSample();
+    s.win_streak_guard = { trigger_profit_fen: 1 } as Record<string, unknown>;
+    expect(() => parseEconomyExt(s)).toThrow(/enabled/);
+    const s2 = validSample();
+    s2.win_streak_guard = { enabled: 'true' };
+    expect(() => parseEconomyExt(s2)).toThrow(/enabled/);
+  });
+});
+
+describe('parseEconomyExt：history 段【文档外补充：2026-10-03 人工决策落地】', () => {
+  it('retention_options_days 含负数/小数/字符串 → 拒绝；0=永久保留为合法值', () => {
+    for (const bad of [-1, 0.5, '7']) {
+      const s = validSample();
+      s.history = { retention_options_days: [7, bad] };
+      expect(() => parseEconomyExt(s)).toThrow(/retention_options_days/);
+    }
+    const s = validSample();
+    s.history = { retention_options_days: [0] };
+    expect(parseEconomyExt(s).history.retentionOptionsDays).toEqual([0]);
+    const dup = validSample();
+    dup.history = { retention_options_days: [7, 7] };
+    expect(() => parseEconomyExt(dup)).toThrow(/重复/);
+  });
+
+  it('retention_options_days 空数组 / 段缺失 → 拒绝', () => {
+    const s = validSample();
+    s.history = { retention_options_days: [] };
+    expect(() => parseEconomyExt(s)).toThrow(/retention_options_days/);
+    const s2 = validSample();
+    delete s2.history;
+    expect(() => parseEconomyExt(s2)).toThrow();
+    const s3 = validSample();
+    delete s3.win_streak_guard;
+    expect(() => parseEconomyExt(s3)).toThrow();
   });
 });
 

@@ -4,9 +4,11 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * HistoryPage 组件测试（M5 阶段 7；docs/开发文档.md 3.10 / 第四章 /history）：
+ * HistoryPage 组件测试（M5 阶段 7；docs/开发文档.md 3.10 / 第四章 /history；
+ * M8【文档外补充：2026-10-03 人工决策落地】列表精简为 3 列）：
  * - 空态：0 局时统计面板全 0、列表空态文案，不报错；
- * - 渲染：统计 6 项 + 列表 7 字段（对局时间/档位/入场消耗/结果/最终报价或开牌奖金/税额/实际盈亏）；
+ * - 渲染：统计 6 项保留 + 列表仅 3 列（对局时间/输赢金额/对局结果盈利亏损保本），
+ *   其余列（档位/入场消耗/最终金额/税额/成交离场终局开牌）absent 断言；
  * - 双筛选联动重新查询（档位/结果变化触发 list 重查）；
  * - 分页（页码/上一页/下一页）。
  * 全部 API 模块 mock；金额一律分，展示层 formatMoney 转元。
@@ -104,7 +106,7 @@ describe('HistoryPage（/history 对决历史页）', () => {
     expect(screen.queryByText(/共 \d+ 条/)).toBeNull();
   });
 
-  it('渲染：统计 6 项与列表 7 字段逐项展示（3.10 逐字口径）', async () => {
+  it('渲染：统计 6 项保留 + 列表仅 3 列，其余列 absent', async () => {
     const stats: HistoryStats = {
       totalMatches: 3,
       totalNetProfitFen: 66600,
@@ -120,25 +122,37 @@ describe('HistoryPage（/history 对决历史页）', () => {
       totalTaxFen: 1550,
     };
     const list: HistoryList = {
-      items: [ITEM, { ...ITEM, sessionId: 41, outcome: '终局开牌', netProfitFen: -12000 }],
+      items: [
+        ITEM,
+        { ...ITEM, sessionId: 41, netProfitFen: -12000 },
+        { ...ITEM, sessionId: 40, netProfitFen: 0 },
+      ],
       page: 1,
       pageSize: 20,
-      total: 2,
+      total: 3,
       totalPages: 1,
     };
     mockAll(stats, list);
     renderPage();
-    // 列表 7 字段
-    await waitFor(() => expect(screen.getAllByText('2026-10-01 12:34')).toHaveLength(2));
-    expect(screen.getAllByText('取款机').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('¥388')).toHaveLength(2); // 入场消耗（两行均为 388 元）
-    expect(screen.getAllByText('成交离场').length).toBe(1);
-    expect(screen.getAllByText('终局开牌').length).toBe(1);
-    expect(screen.getAllByText('¥505')).toHaveLength(2); // 最终报价 / 开牌奖金（两行同额）
-    expect(screen.getAllByText('¥0').length).toBeGreaterThanOrEqual(1); // 税额
-    expect(screen.getByText('+117 元')).toBeTruthy(); // 实际盈亏（+11700 分）
-    expect(screen.getByText('-120 元')).toBeTruthy(); // 实际盈亏（-12000 分）
-    // 统计面板
+    // 3 列逐列渲染（对局时间 / 输赢金额 / 对局结果）
+    await waitFor(() => expect(screen.getAllByText('2026-10-01 12:34').length).toBe(3));
+    expect(screen.getByText('+117 元')).toBeTruthy(); // 输赢金额（+11700 分）
+    expect(screen.getByText('-120 元')).toBeTruthy(); // 输赢金额（-12000 分）
+    expect(screen.getByText('0 元')).toBeTruthy(); // 输赢金额（保本 0）
+    expect(screen.getAllByText('盈利').length).toBeGreaterThanOrEqual(1); // 对局结果
+    expect(screen.getAllByText('亏损').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('保本').length).toBeGreaterThanOrEqual(1);
+    // M8 精简：表格仅 3 个列头（对局时间/输赢金额/对局结果），其余列 absent
+    const headers = screen.getAllByRole('columnheader');
+    expect(headers.map((h) => h.textContent)).toEqual(['对局时间', '输赢金额', '对局结果']);
+    expect(screen.queryByText('入场消耗')).toBeNull();
+    expect(screen.queryByText('最终报价 / 开牌奖金')).toBeNull();
+    expect(screen.queryByText('税额')).toBeNull();
+    expect(screen.queryByText('成交离场')).toBeNull();
+    expect(screen.queryByText('终局开牌')).toBeNull();
+    expect(screen.queryByText('¥388')).toBeNull(); // 入场消耗金额
+    expect(screen.queryByText('¥505')).toBeNull(); // 最终报价/开牌奖金金额
+    // 统计面板（3.10 既有功能保留不动）
     expect(screen.getByText('3 局')).toBeTruthy();
     expect(screen.getByText('+666 元')).toBeTruthy(); // 累计净盈亏
     expect(screen.getByText('67%')).toBeTruthy(); // 胜率 0.6667 → 67%
@@ -147,7 +161,7 @@ describe('HistoryPage（/history 对决历史页）', () => {
     expect(screen.getByText((_, el) => el?.tagName === 'SPAN' && el.textContent === '取款机2 局')).toBeTruthy();
     expect(screen.getByText((_, el) => el?.tagName === 'SPAN' && el.textContent === '入门档1 局')).toBeTruthy();
     // 分页信息
-    expect(screen.getByText('共 2 条 · 第 1 / 1 页')).toBeTruthy();
+    expect(screen.getByText('共 3 条 · 第 1 / 1 页')).toBeTruthy();
   });
 
   it('双筛选联动重新查询：档位/结果变化触发 list 重查并重置回第 1 页', async () => {

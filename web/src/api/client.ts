@@ -52,6 +52,13 @@ export function getErrorMessage(error: unknown): string {
     const data = error.response?.data as { message?: string | string[] } | undefined;
     if (data?.message) return Array.isArray(data.message) ? data.message[0] : data.message;
   }
+
+  const fallback = error as
+    | { response?: { data?: { message?: string | string[] } } }
+    | undefined;
+  const message = fallback?.response?.data?.message;
+  if (message) return Array.isArray(message) ? message[0] : message;
+
   return '网络错误，请稍后重试';
 }
 

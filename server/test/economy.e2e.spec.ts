@@ -2,7 +2,8 @@
  * M4 经济系统集成测试（docs/开发文档.md 3.8.2–3.8.5 / 6.3 / 七章.6）：
  * 签到（8 天倍数表/断签/幂等）、每日任务（开局即计/领奖幂等/00:00 失效/勤奋玩家）、
  * 破产救助（门槛/对局中/每日 3 次）、成就逐项时序（含超时托管路径、百万梦想边界、
- * 博弈到底仅 swap、东山再起、连胜保本截断、勤劳玩家 100 局、总开关 off）、
+ * 博弈到底仅 swap、东山再起、连胜计数器口径（M8：保本不中断不计入）、
+ * 勤劳玩家 100 局（M8 改读 user_game_state 计数器）、总开关 off）、
  * fund_flows 恒定校验（balance_after 链与 wallet 终值一致）。
  * 跨天断言全部用 FakeClock.advance(24h)，禁止真实 sleep。
  */
@@ -29,6 +30,8 @@ const { GameSessionService } =
   require('../src/match/game-session.service') as typeof import('../src/match/game-session.service');
 const { AchievementsService } =
   require('../src/economy/achievements.service') as typeof import('../src/economy/achievements.service');
+const { getEconomyExt, setEconomyExtCacheForTest } =
+  require('../src/config/economy') as typeof import('../src/config/economy');
 /* eslint-enable @typescript-eslint/no-var-requires */
 
 /** 假时钟（任务书 §8）：跨天/超时托管全部推进此钟，禁止真实 sleep */
@@ -264,6 +267,7 @@ async function playKeepEnd(
   token: string,
   tier: number,
   pickMax: boolean,
+  expectOriginalPrize = true,
 ): Promise<{ sessionId: number; settlement: Record<string, any> }> {
   const start = await api('POST', '/match/start', { tier }, token);
   expect(start.status).toBe(201);
@@ -290,8 +294,41 @@ async function playKeepEnd(
     }
   }
   expect(state.settlement.reason).toBe('keep');
-  expect(state.settlement.prizeFen).toBe(target.amount);
+  if (expectOriginalPrize) {
+    expect(state.settlement.prizeFen).toBe(target.amount);
+  }
   return { sessionId, settlement: state.settlement };
+}
+
+/** M8【文档外补充：2026-10-03 人工决策落地】：直接读 user_game_state 计数器行 */
+async function gameStateRow(userId: number): Promise<{
+  win_streak: number;
+  streak_profit_fen: number;
+  guard_frozen: number;
+  guard_triggered_at: number | null;
+  total_settled_games: number;
+}> {
+  const rows = (await dataSource.query(
+    'SELECT win_streak, streak_profit_fen, guard_frozen, guard_triggered_at, total_settled_games FROM user_game_state WHERE user_id = ?',
+    [userId],
+  )) as Record<string, number | null>[];
+  if (rows.length === 0) {
+    return {
+      win_streak: 0,
+      streak_profit_fen: 0,
+      guard_frozen: 0,
+      guard_triggered_at: null,
+      total_settled_games: 0,
+    };
+  }
+  const r = rows[0];
+  return {
+    win_streak: Number(r.win_streak),
+    streak_profit_fen: Number(r.streak_profit_fen),
+    guard_frozen: Number(r.guard_frozen),
+    guard_triggered_at: r.guard_triggered_at === null ? null : Number(r.guard_triggered_at),
+    total_settled_games: Number(r.total_settled_games),
+  };
 }
 
 /** GET /api/achievements → code 索引视图 */
@@ -684,21 +721,23 @@ describe('成就：东山再起（救助后盈利局）', () => {
   });
 });
 
-describe('成就：连胜猎手（口径冻结：保本截断，任务 D）', () => {
+describe('成就：连胜猎手（M8 改读 user_game_state.win_streak【文档外补充：2026-10-03 人工决策落地】，口径：盈利 +1、亏损清零、保本不中断不计入）', () => {
   it('盈×5 解锁', async () => {
-    const { token } = await registerAndLogin();
+    const { token, userId } = await registerAndLogin();
     for (let i = 0; i < 4; i++) {
       await playKeepEnd(token, 1, true);
       expect(await isUnlocked(token, 'win_streak')).toBe(false);
     }
     await playKeepEnd(token, 1, true); // 第 5 连盈
     await eventually(async () => isUnlocked(token, 'win_streak'));
+    expect((await gameStateRow(userId)).win_streak).toBe(5);
   });
 
   it('盈利后插入亏损局再盈×5 重新达成解锁（亏损清零，重新累计）', async () => {
     const { token, userId } = await registerAndLogin();
     await playKeepEnd(token, 1, true); // 盈 1
-    await quickSettle(token, 1); // 亏损截断
+    await quickSettle(token, 1); // 亏损清零
+    expect((await gameStateRow(userId)).win_streak).toBe(0);
     await setBalance(userId, 1000000);
     for (let i = 0; i < 4; i++) {
       await playKeepEnd(token, 1, true);
@@ -706,11 +745,12 @@ describe('成就：连胜猎手（口径冻结：保本截断，任务 D）', ()
     }
     await playKeepEnd(token, 1, true); // 亏损后重新连盈第 5 局
     await eventually(async () => isUnlocked(token, 'win_streak'));
+    expect((await gameStateRow(userId)).win_streak).toBe(5);
   });
 
-  it('「盈、保本、盈×4」序列不解锁（保本截断：保本局不计入连胜也不归零前段）', async () => {
+  it('「盈、保本、盈×4」序列解锁（保本不中断连胜延续，但保本局本身不计入）', async () => {
     const { token, userId } = await registerAndLogin();
-    await playKeepEnd(token, 1, true); // 盈
+    await playKeepEnd(token, 1, true); // 盈 → win_streak=1
     // 保本局：还价恰 = 入场费 38800 分（≥ 剩余最低面额且 ≤ 0.85EV → 必接受；profit=0 无税）
     {
       const start = await api('POST', '/match/start', { tier: 1 }, token);
@@ -722,45 +762,32 @@ describe('成就：连胜猎手（口径冻结：保本截断，任务 D）', ()
       expect(res.data.state.settlement.prizeFen).toBe(38800);
       expect(res.data.state.netProfitFen).toBe(0); // 保本
     }
-    for (let i = 0; i < 4; i++) await playKeepEnd(token, 1, true); // 盈×4（段内 4 连）
-    await setBalance(userId, 1000000);
-
-    // 白盒直驱最终判定（await 同步返回，无异步时序歧义）：倒序 4 连后遇保本截断
-    const gained = await achievementsService.evaluateOnSettled({
-      userId,
-      sessionId: 0,
-      tier: 1,
-      status: '成交',
-      timeout: false,
-      settlement: { reason: 'counter', prizeFen: 1, profitFen: -38799, taxFen: 0, netFen: 1 },
-      netProfitFen: -38799,
-      settledBalanceFen: 0,
-    });
-    expect(gained).not.toContain('win_streak');
-    expect(await isUnlocked(token, 'win_streak')).toBe(false);
+    // 保本不中断不计入：win_streak 保持 1、结算局数 +1（M8 钦定口径，注释标注）
+    const afterEven = await gameStateRow(userId);
+    expect(afterEven.win_streak).toBe(1);
+    expect(afterEven.total_settled_games).toBe(2);
+    for (let i = 0; i < 3; i++) {
+      await playKeepEnd(token, 1, true);
+      expect(await isUnlocked(token, 'win_streak')).toBe(false);
+    }
+    await playKeepEnd(token, 1, true); // 跨保本延续的第 5 连盈 → 解锁
+    await eventually(async () => isUnlocked(token, 'win_streak'));
+    const finalState = await gameStateRow(userId);
+    expect(finalState.win_streak).toBe(5);
+    expect(finalState.total_settled_games).toBe(6);
   });
 });
 
-describe('成就：勤劳玩家（累计 100 局，托管局计数同样有效）', () => {
-  it('预置 99 条 finished_at 非空历史 + 第 100 局超时托管结算解锁', async () => {
+describe('成就：勤劳玩家（累计 100 局，托管局计数同样有效；M8 改读 total_settled_games 计数器【文档外补充：2026-10-03 人工决策落地】）', () => {
+  it('预置计数器 99 + 第 100 局超时托管结算解锁（造 user_game_state 行替代造 game_sessions 行）', async () => {
     const { token, userId } = await registerAndLogin();
-    // 预置 99 条已结算历史行（net_profit=0 保本，避免干扰本用户其他成就断言）
-    const base = new Date('2026-01-01T00:00:00.000Z');
-    for (let i = 0; i < 99; i++) {
-      const finished = new Date(base.getTime() + i * 60000)
-        .toISOString()
-        .slice(0, 19)
-        .replace('T', ' ');
-      await dataSource.query(
-        `INSERT INTO game_sessions
-           (user_id, tier, entry_fee, tier_max_prize, status, timeout_deadline,
-            net_profit, finished_at, state_snapshot)
-         VALUES (?, 1, 38800, 388800, '成交', 0, 0, ?, '{}')`,
-        [userId, finished],
-      );
-    }
+    // M8 改造：不再回扫 game_sessions（历史清理会物理删行），改预置计数器行
+    await dataSource.query(
+      'INSERT INTO user_game_state (user_id, total_settled_games) VALUES (?, 99)',
+      [userId],
+    );
 
-    // 第 100 局：超时托管结算（托管局 finished_at 非空即计数）
+    // 第 100 局：超时托管结算（托管局同样计入 total_settled_games）
     const start = await api('POST', '/match/start', { tier: 1 }, token);
     const sessionId = start.data.sessionId as number;
     await api('POST', `/match/${sessionId}/pick`, { index: 5 }, token);
@@ -768,6 +795,7 @@ describe('成就：勤劳玩家（累计 100 局，托管局计数同样有效�
     await sessionService.scanTimeouts();
     const st = (await api('GET', `/match/${sessionId}/state`, undefined, token)).data;
     expect(st.status).toBe('超时结算');
+    expect((await gameStateRow(userId)).total_settled_games).toBe(100);
 
     await eventually(async () => isUnlocked(token, 'hundred_games'));
   });
@@ -832,5 +860,158 @@ describe('成就领取幂等回放（任务 E：金额/余额以流水为准；�
     expect(replay.data.alreadyClaimed).toBe(true);
     expect(replay.data.rewardFen).toBe(flow.amount);
     expect(replay.data.balanceFen).toBe(flow.balance_after);
+  });
+});
+
+describe('win_streak_guard 真实结算 e2e（M8-fix1【文档外补充：2026-10-03 人工决策落地】）', () => {
+  const injectGuard = (enabled: boolean): void => {
+    const base = getEconomyExt();
+    setEconomyExtCacheForTest({
+      ...base,
+      winStreakGuard: enabled
+        ? {
+            enabled: true,
+            // M8-fix2【文档外补充：2026-10-03 人工决策落地】
+            // trigger=1 分为测试内自定参数，偏离建议值 500 元，以使任意盈利局必触发冻结。
+            triggerProfitFen: 1,
+            keepRatioBp: 5000,
+            capFen: 1000,
+            resetHours: 24,
+          }
+        : {
+            enabled: false,
+            triggerProfitFen: null,
+            keepRatioBp: null,
+            capFen: null,
+            resetHours: null,
+          },
+    });
+  };
+
+  afterEach(() => {
+    setEconomyExtCacheForTest(null);
+  });
+
+  // M8-fix1【文档外补充：2026-10-03 人工决策落地】
+  it('真实盈利结算先触发冻结，下一盈利局按比例及封顶截断', async () => {
+    injectGuard(true);
+    const { token, userId } = await registerAndLogin();
+
+    const first = await playKeepEnd(token, 1, true);
+
+    // M8-fix2【文档外补充：2026-10-03 人工决策落地】
+    // 开启态下触发冻结的当局仍按结算前的未冻结状态全额入账。
+    expect(first.settlement.prizeFen).toBe(388800);
+    const firstFlows = await flowsOf(userId);
+    const firstBonus = firstFlows.filter(
+      (flow) => flow.type === '奖金' && flow.ref_id === String(first.sessionId),
+    );
+    expect(firstBonus).toHaveLength(1);
+    expect(firstBonus[0].amount).toBe(388800);
+    const firstTaxes = firstFlows.filter(
+      (flow) => flow.type === '税' && flow.ref_id === String(first.sessionId),
+    );
+    expect(firstTaxes).toHaveLength(1);
+    expect(firstTaxes[0].amount).toBe(-first.settlement.taxFen);
+
+    const triggered = await gameStateRow(userId);
+    expect(triggered.guard_frozen).toBe(1);
+    expect(triggered.guard_triggered_at).toBe(fakeClock.now());
+    expect(triggered.win_streak).toBe(1);
+
+    const second = await playKeepEnd(token, 1, true, false);
+    expect(second.settlement.profitFen).toBe(1000);
+    expect(second.settlement.prizeFen).toBe(39800);
+    const afterTruncated = await gameStateRow(userId);
+    expect(afterTruncated.guard_frozen).toBe(1);
+    expect(afterTruncated.win_streak).toBe(2);
+    expect(afterTruncated.total_settled_games).toBe(2);
+
+    const secondFlows = await flowsOf(userId);
+    const bonus = secondFlows.filter(
+      (flow) => flow.type === '奖金' && flow.ref_id === String(second.sessionId),
+    );
+    expect(bonus).toHaveLength(1);
+    expect(bonus[0].amount).toBe(39800);
+    expect(
+      secondFlows.some(
+        (flow) => flow.ref_id === String(second.sessionId) && flow.amount > 39800,
+      ),
+    ).toBe(false);
+
+    // M8-fix2【文档外补充：2026-10-03 人工决策落地】
+    // 截断后盈利仅 1000 分，低于 1000 元起征点，不应产生税流水。
+    expect(
+      secondFlows.filter(
+        (flow) => flow.type === '税' && flow.ref_id === String(second.sessionId),
+      ),
+    ).toHaveLength(0);
+  });
+
+  // M8-fix1【文档外补充：2026-10-03 人工决策落地】
+  it('重复提交已结算动作不重复更新计数器、余额或流水', async () => {
+    injectGuard(true);
+    const { token, userId } = await registerAndLogin();
+    const settled = await playKeepEnd(token, 1, true);
+    const stateBefore = await gameStateRow(userId);
+    const balanceBefore = await balance(userId);
+    const flowsBefore = await flowsOf(userId);
+
+    const replay = await api(
+      'POST',
+      `/match/${settled.sessionId}/swap`,
+      { swap: false },
+      token,
+    );
+    expect(replay.status).toBe(409);
+    expect(await gameStateRow(userId)).toEqual(stateBefore);
+    expect(await balance(userId)).toBe(balanceBefore);
+    expect(await flowsOf(userId)).toEqual(flowsBefore);
+  });
+
+  // M8-fix1【文档外补充：2026-10-03 人工决策落地】
+  it('数据库中已有冻结状态会被下一次真实结算读取并继续生效', async () => {
+    injectGuard(true);
+    const { token, userId } = await registerAndLogin();
+    await dataSource.query(
+      `INSERT INTO user_game_state
+         (user_id, win_streak, streak_profit_fen, guard_frozen,
+          guard_triggered_at, total_settled_games)
+       VALUES (?, 3, 9000, 1, ?, 3)`,
+      [userId, fakeClock.now()],
+    );
+
+    const settled = await playKeepEnd(token, 1, true, false);
+    expect(settled.settlement.profitFen).toBe(1000);
+    expect(settled.settlement.prizeFen).toBe(39800);
+    expect(await gameStateRow(userId)).toMatchObject({
+      win_streak: 4,
+      streak_profit_fen: 10000,
+      guard_frozen: 1,
+      guard_triggered_at: fakeClock.now(),
+      total_settled_games: 4,
+    });
+  });
+
+  // M8-fix1【文档外补充：2026-10-03 人工决策落地】
+  it('功能关闭且未冻结时沿用原结算金额，不发生截断', async () => {
+    injectGuard(false);
+    const { token, userId } = await registerAndLogin();
+
+    const settled = await playKeepEnd(token, 1, true);
+    expect(settled.settlement.profitFen).toBeGreaterThan(1000);
+    expect(settled.settlement.prizeFen).toBe(388800);
+    expect(await gameStateRow(userId)).toMatchObject({
+      win_streak: 1,
+      guard_frozen: 0,
+      guard_triggered_at: null,
+      total_settled_games: 1,
+    });
+
+    const bonus = (await flowsOf(userId)).filter(
+      (flow) => flow.type === '奖金' && flow.ref_id === String(settled.sessionId),
+    );
+    expect(bonus).toHaveLength(1);
+    expect(bonus[0].amount).toBe(388800);
   });
 });

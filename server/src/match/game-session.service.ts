@@ -34,6 +34,13 @@ import {
   type GameSnapshot,
 } from '../game-engine';
 import { WalletService } from '../wallet/wallet.service';
+import { getEconomyExt } from '../config/economy';
+import { UserGameState } from '../entities/user-game-state.entity';
+import {
+  defaultGuardUserState,
+  resolveSettleWithGuard,
+  type GuardUserState,
+} from './win-streak-guard';
 import type { MatchSettledPayload, MatchStartedPayload } from './match-events';
 import { buildPlayerView, computeFlipQuota, type PlayerView } from './player-view';
 import { TIER_ID_BY_INT, tierIdByInt, tierIntById } from './tier-map';
@@ -577,7 +584,22 @@ export class GameSessionService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * 结算（幂等，铁律 1/2）：守卫 UPDATE ... WHERE status='进行'，影响行数=0 即已结算，
-   * 直接返回既有结果，余额只变一次、offers 不重复行。
+   * 直接返回既有结果，余额只变一次、offers 不重复行；
+   * 【文档外补充：2026-10-03 人工决策落地】幂等回放命中时整体跳过：
+   * 任何计数器（user_game_state）不二次更新。
+   *
+   * M8 连胜盈利冻结机制（win_streak_guard，文档外补充）：与结算同事务内，
+   * 在奖金/税流水之前按 resolveSettleWithGuard 的纯函数结果执行（顺序依赖注释见该模块）：
+   * a. 定时解冻判定（reset_hours 到期先解冻，本局不截断）；
+   * b. 冻结中盈利局截断：入账利润 kept=min(floor(P×keep_ratio_bp÷10000), cap_fen)，
+   *    奖金流水金额 = 入场回收 + kept，作废部分不发放不写任何 fund_flows 流水
+   *    【口径钦定·待人工过目】；
+   * c. 税按 kept（截断后）计税【口径钦定：税基=截断后金额，待人工过目】，
+   *    net_profit = kept − tax 落库；
+   * d/e/f/g. 计数器更新与触发判定（先更新计数器再发 match_settled 事件判成就，
+   *    顺序依赖：成就改读计数器，注释见 achievements.service）。
+   * 功能关闭（enabled=false）时资金路径零改动（kept=P、税沿用引擎值），
+   * 仅计数器照常累计（供成就解耦后读取，与资金无关）。
    * 提交后发出 match_settled 内部事件（七章.6 成就判定钩子，阶段 5 消费，文档外补充）。
    */
   private async settleSession(sessionId: number): Promise<void> {
@@ -595,7 +617,6 @@ export class GameSessionService implements OnModuleInit, OnModuleDestroy {
         ? GameSessionStatus.Deal
         : GameSessionStatus.Final;
     const userId = active.userId;
-    const netProfitFen = settlement.netFen - snapshot.tier.entryFeeFen;
 
     const outcome = await runInTransaction(this.dataSource, async (manager) => {
       const guard = await manager
@@ -607,37 +628,77 @@ export class GameSessionService implements OnModuleInit, OnModuleDestroy {
           playing: GameSessionStatus.Playing,
         })
         .execute();
-      if (!guard.affected) return null; // 已结算：直接返回既有结果
+      if (!guard.affected) return null; // 已结算：直接返回既有结果（计数器亦不再更新）
 
-      // 1. 发奖金（幂等键 match:{id}:bonus）
+      // M8【文档外补充：2026-10-03 人工决策落地】：结算事务内懒建并读取 user_game_state，
+      // 状态全部落库（决策原文：冻结状态持久化、重启不丢，禁用内存态）
+      await manager.query('INSERT OR IGNORE INTO "user_game_state" ("user_id") VALUES (?)', [
+        userId,
+      ]);
+      const stateRow = await manager.findOne(UserGameState, { where: { userId } });
+      const state: GuardUserState = stateRow
+        ? {
+            winStreak: stateRow.winStreak,
+            streakProfitFen: stateRow.streakProfitFen,
+            guardFrozen: stateRow.guardFrozen,
+            guardTriggeredAt: stateRow.guardTriggeredAt,
+            totalSettledGames: stateRow.totalSettledGames,
+          }
+        : defaultGuardUserState();
+      const settle = resolveSettleWithGuard({
+        now: this.clock.now(),
+        profitFen: settlement.profitFen,
+        engineTaxFen: settlement.taxFen,
+        entryFeeFen: snapshot.tier.entryFeeFen,
+        state,
+        guard: getEconomyExt().winStreakGuard,
+        tax: snapshot.tax,
+      });
+
+      // 1. 发奖金（幂等键 match:{id}:bonus）：金额 = 入场回收 + kept（截断时作废部分不发放）
       let balance = await this.walletService.adjustBalance(manager, {
         userId,
-        delta: settlement.prizeFen,
+        delta: settle.bonusDeltaFen,
         type: FundFlowType.Bonus,
         refId: String(sessionId),
         idemKey: `match:${sessionId}:bonus`,
       });
-      // 2. 计税（taxFen=0 时不写税流水）
-      if (settlement.taxFen > 0) {
+      // 2. 计税（taxFen=0 时不写税流水；税基 = 截断后 kept，铁律 8 税率表不动）
+      if (settle.taxFen > 0) {
         balance = await this.walletService.adjustBalance(manager, {
           userId,
-          delta: -settlement.taxFen,
+          delta: -settle.taxFen,
           type: FundFlowType.Tax,
           refId: String(sessionId),
           idemKey: `match:${sessionId}:tax`,
         });
       }
-      // 3. 结算字段 + 终态快照
+      // 3. 结算字段 + 终态快照（final_bonus 为实际入账奖金：截断后前端展示截断后金额，
+      //    UI 不做冻结状态专门展示 —— 文档外补充）
       await manager.update(GameSession, { id: sessionId }, {
-        finalBonus: settlement.prizeFen,
-        tax: settlement.taxFen,
-        netProfit: netProfitFen,
+        finalBonus: settle.bonusDeltaFen,
+        tax: settle.taxFen,
+        netProfit: settle.netProfitFen,
         settledBalance: balance,
         currentOffer: null,
         flipQuota: 0,
         stateSnapshot: JSON.stringify(snapshot),
       });
-      return { settledBalanceFen: balance };
+      // 4. 计数器整体写回（含 total_settled_games，托管结算局同样计数，M4 口径）
+      await manager.update(UserGameState, { userId }, {
+        winStreak: settle.nextState.winStreak,
+        streakProfitFen: settle.nextState.streakProfitFen,
+        guardFrozen: settle.nextState.guardFrozen,
+        guardTriggeredAt: settle.nextState.guardTriggeredAt,
+        totalSettledGames: settle.nextState.totalSettledGames,
+      });
+      return {
+        settledBalanceFen: balance,
+        netProfitFen: settle.netProfitFen,
+        prizeFen: settle.bonusDeltaFen,
+        profitFen: settle.keptProfitFen,
+        taxFen: settle.taxFen,
+      };
     });
 
     // 会话终局：移出内存（后续 GET state 走 DB 快照）
@@ -645,7 +706,9 @@ export class GameSessionService implements OnModuleInit, OnModuleDestroy {
     this.queues.delete(sessionId);
     if (!outcome) return;
 
-    // 七章.6 成就判定钩子（M4 经济模块消费）：含超时托管结算路径
+    // 七章.6 成就判定钩子（M4 经济模块消费）：含超时托管结算路径；
+    // M8：settlement 各金额均为截断后实际入账口径（奖金流水金额/截断后利润/截断后税），
+    // 供成就「百万梦想」等按实际发放金额判定【文档外补充：2026-10-03 人工决策落地】
     const payload: MatchSettledPayload = {
       userId,
       sessionId,
@@ -654,12 +717,12 @@ export class GameSessionService implements OnModuleInit, OnModuleDestroy {
       timeout: isTimeout,
       settlement: {
         reason: settlement.reason,
-        prizeFen: settlement.prizeFen,
-        profitFen: settlement.profitFen,
-        taxFen: settlement.taxFen,
-        netFen: settlement.netFen,
+        prizeFen: outcome.prizeFen,
+        profitFen: outcome.profitFen,
+        taxFen: outcome.taxFen,
+        netFen: outcome.prizeFen - outcome.taxFen,
       },
-      netProfitFen,
+      netProfitFen: outcome.netProfitFen,
       settledBalanceFen: outcome.settledBalanceFen,
     };
     this.events.emit('match_settled', payload);

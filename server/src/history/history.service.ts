@@ -1,6 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
+import { DataSource, In } from 'typeorm';
+import { runInTransaction } from '../common/transaction';
+import { CLOCK, type Clock } from '../match/clock';
 import { GameSession, GameSessionStatus } from '../entities/game-session.entity';
 
 /**
@@ -78,14 +80,101 @@ function formatMinute(date: Date): string {
   );
 }
 
+/**
+ * 过期清理调度间隔（进程内 setInterval）【文档外补充：2026-10-03 人工决策落地】。
+ * 铁律（任务书 §21）：禁止新增依赖（无 @nestjs/schedule），定时用进程内 interval，
+ * 句柄随 onModuleDestroy 清理防测试泄漏；e2e/单测直接调 purgeExpired 断言，不依赖真实定时。
+ */
+const PURGE_INTERVAL_MS = 60 * 60 * 1000;
+/** 每批删除上限（防长事务）【文档外补充】 */
+const PURGE_BATCH_SIZE = 500;
+
 /** DB status → 结果标签（结果映射【钦定】，见类注释） */
 export function outcomeOfStatus(status: GameSessionStatus): HistoryOutcome {
   return status === GameSessionStatus.Deal ? '成交离场' : '终局开牌';
 }
 
 @Injectable()
-export class HistoryService {
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+export class HistoryService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(HistoryService.name);
+  private purgeTimer: NodeJS.Timeout | null = null;
+
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    // M8【文档外补充】注入时钟：调度/清理的「现在」统一走 CLOCK 令牌（禁止散落 Date.now）
+    @Inject(CLOCK) private readonly clock: Clock,
+  ) {}
+
+  /** 启动完成后执行一次 + 之后每 1 小时触发（interval 句柄随 close 清理） */
+  async onModuleInit(): Promise<void> {
+    await this.purgeExpired(this.clock.now()).catch((e) =>
+      this.logger.error('历史过期清理失败（启动）', e as Error),
+    );
+    this.purgeTimer = setInterval(() => {
+      void this.purgeExpired(this.clock.now()).catch((e) =>
+        this.logger.error('历史过期清理失败', e as Error),
+      );
+    }, PURGE_INTERVAL_MS);
+    this.purgeTimer.unref();
+  }
+
+  onModuleDestroy(): void {
+    if (this.purgeTimer) clearInterval(this.purgeTimer);
+  }
+
+  /**
+   * 过期清理【文档外补充：2026-10-03 人工决策落地】（人工决策原文：对局历史自动清理，
+   * 保留多久在设置中由用户自行决定）：
+   * - 按用户各自 user_settings.history_retention_days 删除 game_sessions 中
+   *   finished_at < now − retention×24h 的行；retention=0（永久保留）的用户不删；
+   * - 删除 = 物理 DELETE，删后自然从列表与统计消失（符合决策原意）；
+   * - 不删 fund_flows（资金流水是账本，永久保留）；与对局写入无冲突（删的是 finished 旧记录），
+   *   仍走 runInTransaction 分批删除（每批 ≤500 行防长事务）。
+   * 返回本次删除总行数（时钟可注入：测试直接传 now 断言）。
+   */
+  async purgeExpired(now: number): Promise<number> {
+    const retentionRows = (await this.dataSource.query(
+      'SELECT user_id, history_retention_days FROM "user_settings" WHERE history_retention_days > 0',
+    )) as { user_id: number; history_retention_days: number }[];
+    let totalDeleted = 0;
+    for (const row of retentionRows) {
+      const userId = Number(row.user_id);
+      const retentionDays = Number(row.history_retention_days);
+      // M8-fix1【文档外补充：2026-10-03 人工决策落地】：截止时刻显式格式化为
+      // 与 finished_at 一致的秒精度 UTC datetime。若直接传 Date，驱动会序列化出毫秒，
+      // SQLite 文本比较会把恰好到期的「...00」误判为小于「...00.000」，违反严格 < 边界。
+      const cutoff = new Date(now - retentionDays * 24 * 60 * 60 * 1000)
+        .toISOString()
+        .slice(0, 19)
+        .replace('T', ' ');
+      for (;;) {
+        const deleted = await runInTransaction(this.dataSource, async (manager) => {
+          // 每批 ≤ PURGE_BATCH_SIZE 行（防长事务）：先选 id 再删（manager.delete 可得
+          // affected 数；offers/game_cards 对 game_sessions 为 ON DELETE CASCADE，随删级联）
+          const ids = await manager
+            .getRepository(GameSession)
+            .createQueryBuilder('s')
+            .select('s.id', 'id')
+            .where('s.user_id = :userId', { userId })
+            .andWhere('s.finished_at IS NOT NULL')
+            .andWhere('s.finished_at < :cutoff', { cutoff })
+            .limit(PURGE_BATCH_SIZE)
+            .getRawMany<{ id: number | string }>();
+          if (ids.length === 0) return 0;
+          const result = await manager.delete(GameSession, {
+            id: In(ids.map((r) => Number(r.id))),
+          });
+          return result.affected ?? 0;
+        });
+        totalDeleted += deleted;
+        if (deleted < PURGE_BATCH_SIZE) break;
+      }
+    }
+    if (totalDeleted > 0) {
+      this.logger.log(`历史过期清理完成：删除 ${totalDeleted} 行`);
+    }
+    return totalDeleted;
+  }
 
   /**
    * GET /api/history?tier=&result=&page=（6.3）。

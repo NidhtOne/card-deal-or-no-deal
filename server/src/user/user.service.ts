@@ -24,6 +24,8 @@ import { RefreshToken } from '../entities/refresh-token.entity';
 import { UserCharacterImage } from '../entities/user-character-image.entity';
 import { UserProfile } from '../entities/user-profile.entity';
 import { UserSettings } from '../entities/user-settings.entity';
+// M8：对局累计状态随注销删除【文档外补充：2026-10-03 人工决策落地】
+import { UserGameState } from '../entities/user-game-state.entity';
 import { UserWallet } from '../entities/user-wallet.entity';
 import { User } from '../entities/user.entity';
 import { HistoryService } from '../history/history.service';
@@ -61,6 +63,13 @@ export interface SettingsView {
   achievementEnabled: boolean;
   /** 可选曲目白名单（assets/music/ 现有文件；文档外补充，供前端渲染选项） */
   availableTracks: string[];
+  /**
+   * 对局历史保留天数（0=永久保留）【文档外补充：2026-10-03 人工决策落地】。
+   * 可选值白名单 historyRetentionOptionsDays 同源 economy.json
+   * history.retention_options_days（铁律 7 延伸：前端禁止硬编码数值）。
+   */
+  historyRetentionDays: number;
+  historyRetentionOptionsDays: number[];
 }
 
 /**
@@ -231,7 +240,7 @@ export class UserService {
     }
   }
 
-  /** GET /api/user/settings —— 获取设置（含曲目白名单 availableTracks） */
+  /** GET /api/user/settings —— 获取设置（含曲目白名单 availableTracks 与历史保留选项） */
   async getSettings(userId: number): Promise<SettingsView> {
     const row = await this.getSettingsRow(userId);
     const availableTracks = await this.assetCatalog.listMusicTracks();
@@ -249,6 +258,8 @@ export class UserService {
       riskPopupEnabled: row.riskPopupEnabled,
       achievementEnabled: row.achievementEnabled,
       availableTracks,
+      historyRetentionDays: row.historyRetentionDays,
+      historyRetentionOptionsDays: getEconomyExt().history.retentionOptionsDays,
     };
   }
 
@@ -270,6 +281,17 @@ export class UserService {
     if (dto.amountListEnabled !== undefined) patch.amountListEnabled = dto.amountListEnabled;
     if (dto.riskPopupEnabled !== undefined) patch.riskPopupEnabled = dto.riskPopupEnabled;
     if (dto.achievementEnabled !== undefined) patch.achievementEnabled = dto.achievementEnabled;
+    // M8【文档外补充：2026-10-03 人工决策落地】：保留天数白名单校验
+    // （economy.json history.retention_options_days，铁律 7：非法值 400）
+    if (dto.historyRetentionDays !== undefined) {
+      const options = getEconomyExt().history.retentionOptionsDays;
+      if (!options.includes(dto.historyRetentionDays)) {
+        throw new BadRequestException(
+          `对局历史保留天数非法（可选：${options.join('/')}，0=永久保留）`,
+        );
+      }
+      patch.historyRetentionDays = dto.historyRetentionDays;
+    }
     if (Object.keys(patch).length > 0) {
       await this.settings.update({ userId }, patch);
     }
@@ -474,6 +496,8 @@ export class UserService {
         [userId],
       );
       await manager.delete(GameSession, { userId });
+      // M8：对局累计状态表（连胜冻结计数器/成就计数器）随注销删除（FK 级联兜底）
+      await manager.delete(UserGameState, { userId });
       // M4 经济记录（daily_signins / user_task_progress / bailout_records / user_achievements；
       // daily_tasks / achievements 为全局定义表，不随用户删除）
       await manager.delete(UserAchievement, { userId });
