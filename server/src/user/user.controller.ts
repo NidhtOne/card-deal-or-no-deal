@@ -136,7 +136,7 @@ export class UserController {
     return this.userService.updateSettings(user.userId, dto);
   }
 
-  /** GET /api/user/overview —— 账户聚合（文档外补充；统计项 M4 接真实逻辑） */
+  /** GET /api/user/overview —— 账户聚合（文档外补充；统计项与 /api/history/stats 同源） */
   @Get('overview')
   getOverview(@CurrentUser() user: AuthUserPayload): Promise<OverviewView> {
     return this.userService.getOverview(user.userId);

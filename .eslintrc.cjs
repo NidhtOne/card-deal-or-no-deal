@@ -45,5 +45,14 @@ module.exports = {
       extends: ['plugin:@typescript-eslint/recommended', 'plugin:react-hooks/recommended', 'prettier'],
       env: { browser: true, node: false },
     },
+    {
+      // Playwright E2E 与编排配置【文档外补充，M5 阶段 7】：Node 环境，不参与 vite 构建
+      files: ['web/e2e/**/*.ts', 'web/playwright.config.ts'],
+      parser: '@typescript-eslint/parser',
+      parserOptions: { sourceType: 'module' },
+      plugins: ['@typescript-eslint'],
+      extends: ['plugin:@typescript-eslint/recommended', 'prettier'],
+      env: { browser: true, node: true },
+    },
   ],
 };

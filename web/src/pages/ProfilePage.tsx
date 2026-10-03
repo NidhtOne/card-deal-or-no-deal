@@ -157,7 +157,7 @@ export default function ProfilePage() {
           </form>
         </section>
 
-        {/* 账户信息（overview；统计项 M4 前为占位默认值） */}
+        {/* 账户信息 + 数据概览（overview；统计三项与 /api/history/stats 同源，M5 阶段 7 起为真实值） */}
         <section className="rounded-xl border border-slate-800 bg-slate-900 p-6">
           <h2 className="mb-4 text-lg font-semibold">账户信息</h2>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">

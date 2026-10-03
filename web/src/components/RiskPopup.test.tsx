@@ -11,7 +11,7 @@ import { RISK_TEXT_BAILOUT, RISK_TEXT_ENTRY } from './riskPopupText';
 
 afterEach(cleanup);
 
-describe('RiskPopup（通用受控组件）', () => {
+describe('RiskPopup（通用受控组件；附录 A：风险提示弹窗两处触发、可全局关闭——组件文案与回调，开关显隐见 riskPopupText.test.ts 与 LobbyPage.riskPopup.test.tsx）', () => {
   it('渲染逐字文案（触发点 1）', () => {
     const { getByRole, getByText } = render(
       <RiskPopup message={RISK_TEXT_ENTRY} onConfirm={() => undefined} cancelText="取消" />,

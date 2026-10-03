@@ -1,7 +1,8 @@
 import { fileURLToPath } from 'node:url';
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
 import * as dotenv from 'dotenv';
+import react from '@vitejs/plugin-react';
+// vitest 配置入口（E2E 目录排除见下方 test.exclude；不影响 vite build）
+import { configDefaults, defineConfig } from 'vitest/config';
 
 // 端口参数化：读取仓库根 .env 的 PORT（缺省 8080，文档 8.3），前后端共用同一端口配置。
 // 禁止硬编码 8080：8080 被占用（如 Docker Desktop）时只需改 .env 的 PORT，代理同步生效。
@@ -39,5 +40,9 @@ export default defineConfig({
     assetsDir: 'static',
     // Node 24.x + Windows + 非 ASCII 路径下 fs.rmSync(recursive) 崩溃，outDir 由 scripts/clean.js 预清理
     emptyOutDir: false,
+  },
+  test: {
+    // e2e/ 为 Playwright 用例（独立 npm run test:e2e），不进 vitest（铁律 9：npm test 不含 Playwright）
+    exclude: [...configDefaults.exclude, 'e2e/**'],
   },
 });

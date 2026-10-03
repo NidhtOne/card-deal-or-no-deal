@@ -35,7 +35,7 @@ describe('game-engine/tax：速算扣除数自动推导（禁止硬编码）', (
   });
 });
 
-describe('game-engine/tax：calcTaxFen 修正版验收（铁律 8）', () => {
+describe('game-engine/tax：calcTaxFen 修正版验收（铁律 8；附录 A：阶梯税：起征点 1,000、五级超额累进、速算扣除数、亏损不跨局抵扣）', () => {
   it('① 盈利 20000 元 → 应税 19000 元 → 税 1550 元', () => {
     const r = calcTaxFen(2000000, TAX);
     expect(r.taxableFen).toBe(1900000);

@@ -14,7 +14,8 @@ export interface Profile {
 
 /**
  * GET /api/user/overview 返回结构（文档外补充）。
- * M4：签到/破产救助字段为真实值；totalMatches/totalProfit/winRate 属 3.10 历史统计另排期占位。
+ * 签到/破产救助字段为真实值；统计三项（totalMatches/totalProfit/winRate）
+ * 与 GET /api/history/stats 同源（3.10，M5 阶段 7 起接入真实值）。
  */
 export interface Overview {
   balance: number;

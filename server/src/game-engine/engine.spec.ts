@@ -159,7 +159,7 @@ describe('engine：创建与事件日志（规则四.5.2、七章.3）', () => {
   });
 });
 
-describe('engine：状态机主流程（3.6.3）', () => {
+describe('engine：状态机主流程（3.6.3；附录 A：轮次翻牌数 6/5/4/3/2/1… 固定）', () => {
   it('完整流程：翻牌序列 6/5/4/3/2/1/1/1/1，剩 2 张进终局，换牌后结算', () => {
     const game = createTestGame('full-flow');
     game.pickOwnCard(7);
@@ -251,7 +251,7 @@ describe('engine：状态机主流程（3.6.3）', () => {
   });
 });
 
-describe('engine：还价机制（3.6.5、规则四.3）', () => {
+describe('engine：还价机制（3.6.5、规则四.3；附录 A：每轮还价 1 次、非法还价不计次数）', () => {
   it('还价 ≤ 0.85EV 必接受 → 按还价金额成交', () => {
     const game = createTestGame('counter-accept');
     playToFirstOffer(game);
@@ -375,7 +375,7 @@ describe('engine：还价机制（3.6.5、规则四.3）', () => {
   });
 });
 
-describe('engine：非法操作与终局换牌（3.6.6）', () => {
+describe('engine：非法操作与终局换牌（3.6.6；附录 A：终局仅 2 张牌可换牌，二选一不相加）', () => {
   it('非法状态操作一律抛 GameRuleError', () => {
     const game = createTestGame('illegal-ops');
     expect(() => game.flipCurrentRound()).toThrow(GameRuleError); // 未选底牌
@@ -740,7 +740,7 @@ describe('engine：可复现与可恢复（规则四.5.2、七章.3）', () => {
   });
 });
 
-describe('engine：报价性质全量断言（附录 A：报价 ≤EV、≤上限、非负）', () => {
+describe('engine：报价性质全量断言（附录 A：报价 ≤ EV 且 ≤ 档位上限、非负）', () => {
   it('多 seed 托管全程校验每个报价与税事件', () => {
     for (const seed of ['prop-1', 'prop-2', 'prop-3', 'prop-4', 'prop-5']) {
       const game = createTestGame(seed);

@@ -21,5 +21,8 @@ Thumbs.db
 
 # 测试产物与文档（不入库）
 coverage/
+# Playwright E2E 产物（M5 阶段 7，test-results/ 与报告不入库）
+web/test-results/
+web/playwright-report/
 /DOCS/
 /docs/

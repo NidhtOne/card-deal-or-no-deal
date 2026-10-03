@@ -23,7 +23,7 @@ function loadJson(rel: string): unknown {
 const tiersRaw = loadJson('tiers.json');
 const economyRaw = loadJson('economy.json');
 
-describe('config/tiers.json：五档数值（附录 A / 3.6.1）', () => {
+describe('config/tiers.json：五档数值（3.6.1；附录 A：五档门槛与上限严格固定，不可越级参赛）', () => {
   const cfg = parseTiersConfig(tiersRaw);
 
   it('五档门槛与上限严格固定', () => {

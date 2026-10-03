@@ -550,7 +550,7 @@ describe('完整一局：拒绝到底换牌（验收 1/6）', () => {
   });
 });
 
-describe('断线重连与防泄牌（验收 2）', () => {
+describe('断线重连与防泄牌（验收 2；附录 A：掉线重连恢复全部对局状态）', () => {
   it('GET state 恢复全部玩家可见状态，且不含 seed/rngState/未翻牌位金额', async () => {
     const { token, userId } = await registerAndLogin();
     const start = await api('POST', '/match/start', { tier: 1 }, token);
@@ -642,7 +642,7 @@ describe('断线重连与防泄牌（验收 2）', () => {
   });
 });
 
-describe('超时托管（验收 3）', () => {
+describe('超时托管（验收 3；附录 A：超时 5 分钟自动 No Deal 并自动结算，假时钟推进禁止真实等待）', () => {
   it('假时钟推进 5 分钟 → 自动 No Deal 走完全程，终局固定保留底牌，offers 全超时', async () => {
     const { token, userId } = await registerAndLogin();
     const start = await api('POST', '/match/start', { tier: 1 }, token);
@@ -681,7 +681,7 @@ describe('超时托管（验收 3）', () => {
   });
 });
 
-describe('幂等与拒绝分支（验收 4/5）', () => {
+describe('幂等与拒绝分支（验收 4/5；附录 A：五档门槛与上限严格固定，不可越级参赛）', () => {
   it('start 同幂等键并发双击 + 顺序重放：同一会话，余额只扣一次', async () => {
     const { token, userId } = await registerAndLogin();
     const [r1, r2] = await Promise.all([
@@ -881,7 +881,7 @@ describe('注销 × 对局结算并发（事务互斥收口验收）', () => {
   });
 });
 
-describe('服务重启恢复（验收 7）', () => {
+describe('服务重启恢复（验收 7；附录 A：掉线重连恢复全部对局状态）', () => {
   it('销毁重建 Nest 应用：进行中对局可恢复续玩；deadline 已过者被立即托管', async () => {
     const { token } = await registerAndLogin();
     const start = await api('POST', '/match/start', { tier: 1 }, token);

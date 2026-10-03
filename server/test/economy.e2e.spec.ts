@@ -335,7 +335,7 @@ afterAll(async () => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe('每日签到（3.8.2）', () => {
+describe('每日签到（3.8.2；附录 A：签到倍数 ×1.0/×1.2/×1.5/×1.8/×2.0，断签清零）', () => {
   it('连续 8 天逐天签到：multiplierBp/rewardFen 按倍数表（含 D6→D7 ×1.8→×2.0 跳档），流水链恒定', async () => {
     const { token, userId } = await registerAndLogin();
     let prevBalance = await balance(userId);
@@ -480,7 +480,7 @@ describe('每日任务（3.8.3 / 七章.6）', () => {
   });
 });
 
-describe('破产救助（3.8.4）', () => {
+describe('破产救助（3.8.4；附录 A：破产救助 500/次、每日 3 次、<388 可用、对局中不可用）', () => {
   it('余额恰为 38800 分（388 元整）→ 拒绝（严格小于才可申请）', async () => {
     const { token, userId } = await registerAndLogin();
     await setBalance(userId, 38800);
@@ -773,7 +773,7 @@ describe('成就：勤劳玩家（累计 100 局，托管局计数同样有效�
   });
 });
 
-describe('成就：achievement_enabled=off（判定照常落库待领取）', () => {
+describe('成就：achievement_enabled=off（判定照常落库待领取；附录 A：成就 6 项一次性解锁——本 describe 与初出茅庐/百万梦想/博弈到底/东山再起/连胜猎手/勤劳玩家六个 describe + 领取幂等回放共同覆盖）', () => {
   it('off 时解锁照常落库（unclaimed）；重新开启后 list 可见、claim 成功', async () => {
     const { token, userId } = await registerAndLogin();
     const off = await api(
@@ -816,7 +816,7 @@ describe('成就：achievement_enabled=off（判定照常落库待领取）', ()
   });
 });
 
-describe('成就领取幂等回放（任务 E：金额/余额以流水为准）', () => {
+describe('成就领取幂等回放（任务 E：金额/余额以流水为准；附录 A：成就 6 项一次性解锁——重复领取幂等，不重复发放）', () => {
   it('任务 claim 回放：rewardFen/balanceFen 与既有流水行一致', async () => {
     const { token, userId } = await registerAndLogin();
     await quickSettle(token, 1);

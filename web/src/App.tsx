@@ -3,6 +3,7 @@ import RequireAuth from './components/RequireAuth';
 import AchievementsPage from './pages/AchievementsPage';
 import CharacterPage from './pages/CharacterPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import HistoryPage from './pages/HistoryPage';
 import LobbyPage from './pages/LobbyPage';
 import LoginPage from './pages/LoginPage';
 import MatchLoadPage from './pages/MatchLoadPage';
@@ -15,8 +16,8 @@ import SettingsPage from './pages/SettingsPage';
 /**
  * 路由（文档第四章，逐字）。已实现：/login、/register、/forgot-password、/lobby、
  * /match/load/:sessionId、/match/play/:sessionId、/match/result/:sessionId、
- * /profile、/profile/character、/settings、/achievements（M4）。全部需登录页面均有路由守卫。
- * 其余路由（/history）随历史与统计阶段补齐。
+ * /history（M5 阶段 7：列表 + 筛选 + 统计面板）、/profile、/profile/character、
+ * /settings、/achievements（M4）。全部需登录页面均有路由守卫。
  */
 export default function App() {
   return (
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="/match/load/:sessionId" element={<MatchLoadPage />} />
           <Route path="/match/play/:sessionId" element={<MatchPlayPage />} />
           <Route path="/match/result/:sessionId" element={<MatchResultPage />} />
+          <Route path="/history" element={<HistoryPage />} />
           <Route path="/achievements" element={<AchievementsPage />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/profile/character" element={<CharacterPage />} />

@@ -78,7 +78,7 @@ describe('game-engine/offer：phaseForRound（文档外补充轮次映射）', (
   });
 });
 
-describe('game-engine/offer：rollOffer（3.6.4、七章.2）', () => {
+describe('game-engine/offer：rollOffer（3.6.4、七章.2；附录 A：报价 ≤ EV 且 ≤ 档位上限、非负）', () => {
   it('k 在当轮映射区间内均匀取值：k = min + u×(max−min)', () => {
     const remaining = [100, 200, 300, 400];
     // u = 0 → k = min

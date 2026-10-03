@@ -110,7 +110,7 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-describe('触发点 1：进入非取款机档位（3.11 第 1 条）', () => {
+describe('触发点 1：进入非取款机档位（3.11 第 1 条；附录 A：风险提示弹窗两处触发、可全局关闭）', () => {
   it('弹出逐字文案；取消 → 不调 start 留在原页；确认 → 才调 start', async () => {
     mockAll();
     await renderLobby();
@@ -153,7 +153,7 @@ describe('触发点 1：进入非取款机档位（3.11 第 1 条）', () => {
   });
 });
 
-describe('触发点 2：多次破产救助提醒（3.11 第 2 条，依据 needsReminder）', () => {
+describe('触发点 2：多次破产救助提醒（3.11 第 2 条，依据 needsReminder；附录 A：风险提示弹窗两处触发、可全局关闭）', () => {
   it('needsReminder=true 弹逐字文案（仅确认按钮）', async () => {
     mockAll({ needsReminder: true });
     await renderLobby();

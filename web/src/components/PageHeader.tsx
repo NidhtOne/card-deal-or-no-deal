@@ -2,6 +2,8 @@ import { NavLink } from 'react-router-dom';
 
 const LINKS = [
   { to: '/lobby', label: '游戏大厅' },
+  // 对决历史（文档第四章路由清单；入口位置文档未细化 → 文档外补充：与成就/个人中心并列全局导航）
+  { to: '/history', label: '对决历史' },
   // 成就页（文档第四章路由清单；M4 新增入口）
   { to: '/achievements', label: '成就' },
   { to: '/profile', label: '个人中心' },

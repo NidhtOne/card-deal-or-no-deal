@@ -26,6 +26,7 @@ import { UserProfile } from '../entities/user-profile.entity';
 import { UserSettings } from '../entities/user-settings.entity';
 import { UserWallet } from '../entities/user-wallet.entity';
 import { User } from '../entities/user.entity';
+import { HistoryService } from '../history/history.service';
 import { CLOCK, type Clock } from '../match/clock';
 import { AssetCatalogService } from '../upload/asset-catalog.service';
 import { UploadedImage, UploadService } from '../upload/upload.service';
@@ -64,8 +65,9 @@ export interface SettingsView {
 
 /**
  * GET /api/user/overview 返回结构（6.2 未定义 —— 文档外补充，落实 3.2「账户信息/数据概览」）。
- * balance / 签到 / 破产救助字段为 M4 第一期真实值（金额单位：分；「今日」服务器本地日期）；
- * totalMatches / totalProfit / winRate 属对决历史与统计（3.10），本阶段不含、另排期，先占位。
+ * balance / 签到 / 破产救助字段为真实值（金额单位：分；「今日」服务器本地日期）；
+ * totalMatches / totalProfit / winRate 属对决历史与统计（3.10），M5 阶段 7 起接入真实值，
+ * 与 GET /api/history/stats 同源（复用 HistoryService，禁止另造统计口径）。
  * bailoutEligible / bailoutMaxPerDay 为大厅破产救助入口高亮数据源（门槛/每日上限取 config，
  * 铁律 7 延伸：数值禁止前端硬编码）—— 文档外补充字段，注释标注。
  */
@@ -78,9 +80,9 @@ export interface OverviewView {
   bailoutEligible: boolean;
   /** 破产救助每日上限次数（config/economy.json bailout.max_per_day） */
   bailoutMaxPerDay: number;
-  totalMatches: number; // 3.10 历史统计阶段占位
-  totalProfit: number; // 3.10 历史统计阶段占位（单位：分）
-  winRate: number; // 3.10 历史统计阶段占位（0-1）
+  totalMatches: number; // 3.10 累计对局数（完赛口径，含托管局）
+  totalProfit: number; // 3.10 累计净盈亏（单位：分；与 stats 同源）
+  winRate: number; // 3.10 总体胜率（0-1；盈利局/完赛总局）
 }
 
 /** 角色立绘历史项（GET /api/user/character/history，6.2 未定义 —— 文档外补充） */
@@ -111,6 +113,7 @@ export class UserService {
     @Inject(CLOCK) private readonly clock: Clock,
     private readonly uploadService: UploadService,
     private readonly assetCatalog: AssetCatalogService,
+    private readonly historyService: HistoryService,
   ) {}
 
   /**
@@ -273,7 +276,7 @@ export class UserService {
     return this.getSettings(userId);
   }
 
-  /** GET /api/user/overview —— 账户聚合（6.2 未定义 —— 文档外补充；M4 签到/救助字段已接真实逻辑） */
+  /** GET /api/user/overview —— 账户聚合（6.2 未定义 —— 文档外补充；统计项与 /api/history/stats 同源） */
   async getOverview(userId: number): Promise<OverviewView> {
     const wallet = await this.wallets.findOne({ where: { userId } });
     const balance = wallet?.balance ?? 0;
@@ -291,6 +294,8 @@ export class UserService {
       where: { userId, applyDate: today },
     });
     const bailoutCfg = getEconomyExt().bailout;
+    // 数据概览三项（3.2）：复用 stats 接口同一聚合（3.10 同源，禁止另造口径）
+    const stats = await this.historyService.stats(userId);
     return {
       balance,
       todaySignedIn,
@@ -298,10 +303,9 @@ export class UserService {
       todayBailoutUsed,
       bailoutEligible: balance < bailoutCfg.thresholdFen,
       bailoutMaxPerDay: bailoutCfg.maxPerDay,
-      // 对决历史与统计（3.10）本阶段不含、另排期 —— 先返回占位默认值
-      totalMatches: 0,
-      totalProfit: 0,
-      winRate: 0,
+      totalMatches: stats.totalMatches,
+      totalProfit: stats.totalNetProfitFen,
+      winRate: stats.winRate,
     };
   }
 

@@ -342,7 +342,7 @@ describe('设置（3.7 / 6.2）', () => {
   });
 });
 
-describe('头像上传（3.2）', () => {
+describe('头像上传（3.2；附录 A：用户头像与角色图均由用户自行上传——头像部分）', () => {
   it('有效 PNG：重编码落盘 + 多尺寸缩略图；带 EXIF 的 JPG 输出无 EXIF', async () => {
     const username = uniq('avatar');
     const reg = await registerUser(username);
@@ -428,7 +428,7 @@ describe('头像上传（3.2）', () => {
   });
 });
 
-describe('角色系统（3.3）', () => {
+describe('角色系统（3.3；附录 A：用户头像与角色图均由用户自行上传——角色图部分）', () => {
   it('历史初始为空；上传 4 张淘汰最旧（记录与磁盘文件同删）；历史切换', async () => {
     const username = uniq('char');
     const reg = await registerUser(username);
@@ -549,7 +549,7 @@ describe('银行家角色（3.3 / 6.2）', () => {
 });
 
 describe('账户聚合 overview（文档外补充）', () => {
-  it('余额为真实值（分），后六项为 M4 占位默认值', async () => {
+  it('余额为真实值（分）；新用户无完赛局，统计三项为 0（与 /api/history/stats 同源）', async () => {
     const username = uniq('ov');
     const reg = await registerUser(username);
     const access = reg.data.accessToken as string;

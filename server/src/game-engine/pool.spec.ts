@@ -40,8 +40,8 @@ function makeTierAndCommon(jitter: number): { tier: TierConfig; common: CommonCo
 
 const ANCHORS_FEN = [1, 10, 100, 1000, 5000];
 
-describe('game-engine/pool：卡池生成（3.6.2、七章.1）', () => {
-  it('26 张互不重复、全部落在 [1, 档位上限]', () => {
+describe('game-engine/pool：卡池生成（3.6.2、七章.1；附录 A：26 张卡/局、金额唯一、无固定总额）', () => {
+  it('26 张互不重复、全部落在 [1, 档位上限]（附录 A：26 张卡/局、金额唯一）', () => {
     const { tier, common } = makeTierAndCommon(0.25);
     for (const seed of ['p1', 'p2', 'p3', 'p4', 'p5']) {
       const pool = generatePoolFen(tier, common, createAlea(seed));
@@ -53,6 +53,18 @@ describe('game-engine/pool：卡池生成（3.6.2、七章.1）', () => {
         expect(v).toBeLessThanOrEqual(tier.maxPrizeFen);
       }
     }
+  });
+
+  it('无固定总额：多 seed 卡池总和各不相同（附录 A：26 张卡/局、金额唯一、无固定总额）', () => {
+    const { tier, common } = makeTierAndCommon(0.25);
+    const sums = new Set<number>();
+    for (let i = 0; i < 12; i++) {
+      const pool = generatePoolFen(tier, common, createAlea(`sum-${i}`));
+      expect(pool).toHaveLength(POOL_SIZE);
+      sums.add(pool.reduce((acc, v) => acc + v, 0));
+    }
+    // 逐张扰动使总和随 seed 波动；12 个 seed 至少出现 2 种不同总额（非固定总额）
+    expect(sums.size).toBeGreaterThanOrEqual(2);
   });
 
   it('必含小额锚点（0.01/0.1/1/10/50 元，固定不扰动）', () => {
