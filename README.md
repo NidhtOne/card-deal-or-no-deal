@@ -1,87 +1,101 @@
 # 卡牌一掷千金（Deal or No Deal Cards）
 
-经典 Deal or No Deal 玩法改编的网页游戏，本地自托管单体应用（Node 20 + npm workspaces）。
+## 项目简介
 
-> **声明**：本游戏为纯虚拟娱乐，无任何充值与变现功能，游戏资金无现实价值。
+《卡牌一掷千金》是经典 Deal or No Deal 玩法改编的本地自托管网页游戏，采用 Node 20、NestJS、React、SQLite 与 npm workspaces 构建。
 
-## 技术栈
+> **本游戏为纯虚拟娱乐，无任何充值与变现功能，游戏资金无现实价值。**
 
-- 后端 `server/`：NestJS 10 + TypeORM + better-sqlite3（WAL）+ socket.io
-- 前端 `web/`：React 18 + TypeScript + Vite + Tailwind CSS
-- 数据库：SQLite（默认 `./data/game.db`，WAL 模式），表结构变更走 TypeORM migration
+## 功能列表
 
-## 目录结构
+### 账号与设置
 
-```
-├── config/               # 游戏数值配置（tiers.json / economy.json，改 JSON 即生效）
-├── assets/               # 内置素材：bankers/ 立绘、music/ BGM、placeholders/ 占位图（托管为 /assets/...）
-├── scripts/              # 本地脚本（init-env.js 初始化 .env 与 JWT_SECRET）
-├── docs/                 # 开发文档.md（功能/数据库/API/路由/部署的权威依据）
-├── server/               # 后端（NestJS）
-│   └── src/
-│       ├── config/       # 路径与环境变量解析
-│       ├── database/     # TypeORM DataSource 与 migrations
-│       ├── health/       # GET /api/health
-│       └── events/       # socket.io 网关（/ws/socket.io，事件后续阶段实现）
-├── web/                  # 前端（React + Vite）
-├── data/                 # 运行期生成：SQLite 数据库（不入库）
-└── storage/              # 运行期生成：用户上传文件（不入库）
-```
+- 注册、登录、令牌刷新、找回密码与个人中心
+- 头像、角色图和银行家角色管理
+- 音乐、音效、风险提示、面额清单和历史保留期设置
+
+### 对局
+
+- 三档位场次与每局 26 张卡牌
+- 服务端权威生成卡池、银行家报价和还价判定
+- 成交、拒绝、终局二选一、超时托管和掉线重连
+- 对局状态持久化，服务重启后可恢复
+
+### 经济系统
+
+- 每日签到、每日任务、破产救助与成就
+- 整数“分”记账、资金流水和阶梯计税
+- 连胜盈利冻结为可选风控开关，默认关闭
+- `config/economy.json` 中 `win_streak_guard` 的数值由部署者自行填写；默认均为 `null`
+- 启用连胜盈利冻结前，`trigger_profit_fen`、`keep_ratio_bp`、`cap_fen`、`reset_hours` 四项必须全部配置为正整数，否则服务拒绝启动
+
+### 历史与统计
+
+- 对局历史、筛选与统计面板
+- 用户可配置历史保留期
+- 到期历史自动清理
+
+### 音频系统
+
+- 大厅、加载、对局和结算氛围音乐
+- 翻牌、报价、成交、拒绝、揭晓与结算音效
+- 支持替换或扩展本地音乐资源
 
 ## 快速开始
 
+### Docker
+
 ```bash
-npm install
-npm run dev        # 自动初始化 .env 与 JWT_SECRET，前后端并行启动
+docker compose up -d
 ```
 
-- 前端（开发热更新）：http://localhost:5173
-- 后端 API：http://localhost:8080/api/health
-- 静态资源：http://localhost:8080/assets/
-- WebSocket（socket.io）：`/ws/socket.io`
+访问：<http://localhost:8080>
 
-生产模式：`npm run build && npm start`，由后端在 8080 端口直接托管 `web/dist` 与 `assets/`。
+生产部署建议在环境中显式设置稳定的 `JWT_SECRET`，这样会跳过 `.env` 初始化和写盘，并避免容器重建后重新生成密钥导致既有登录态失效。也可以为容器挂载持久化 `.env` 文件。
 
-## 端口冲突排查
+### 裸机
 
-前后端共用仓库根 `.env` 中的 `PORT`（默认 8080，见 docs/开发文档.md 8.3；前端 Vite dev 代理同样读取该值）。
-当 8080 被占用（例如本机 Docker Desktop 占用 `127.0.0.1:8080`）时：
+需要 Node.js 20：
 
-1. 修改 `.env` 中的 `PORT` 为任意空闲端口（如 `8081`）；
-2. 重启 `npm run dev` —— 后端监听端口与前端 `/api`、`/assets`、`/ws` 代理目标同步生效，无需改动任何代码。
+```bash
+npm install
+npm run build
+npm start
+```
 
-检查端口占用：Windows `netstat -ano | findstr :8080`；macOS/Linux `lsof -i :8080`。
+生产入口会在缺少 `.env` 或 `JWT_SECRET` 为空时自动初始化本地 `.env`，然后启动服务。
 
-## 常用脚本
+## 配置说明
 
-| 命令              | 说明                                       |
-| ----------------- | ------------------------------------------ |
-| `npm run dev`     | 前后端并行开发（含 .env 自动初始化）       |
-| `npm run build`   | 构建 server 与 web                         |
-| `npm run start`   | 生产模式启动后端（托管前端构建产物）       |
-| `npm run lint`    | ESLint 检查                                |
-| `npm run format`  | Prettier 格式化                            |
-| `npm run test`    | 运行全部 workspace 测试                    |
+### 环境变量
 
-server 目录内另有 `migration:generate / migration:run / migration:revert / migration:show`（TypeORM CLI）。
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `PORT` | `8080` | 服务监听端口 |
+| `JWT_SECRET` | 空 | JWT 密钥；空值时首次启动自动生成 |
+| `DATABASE_URL` | `./data/game.db` | SQLite 数据库路径 |
+| `STORAGE_DIR` | `./storage` | 用户上传文件目录 |
+| `USE_REDIS` | `false` | 是否启用 Redis |
 
-## 配置
+完整样例见 `.env.example`。真实密钥只能保存在 `.env` 或部署环境变量中，不得提交到仓库。
 
-见 `.env.example`（PORT / JWT_SECRET / DATABASE_URL / STORAGE_DIR / USE_REDIS）。
-`.env` 不存在或 `JWT_SECRET` 为空时，`npm run dev` 会自动生成随机密钥写入本地 `.env`（不入库）。
+游戏数值集中在 `config/tiers.json` 和 `config/economy.json`。修改 JSON 后重启服务即可生效。
 
-## 账号系统（已实现）
+连胜盈利冻结配置位于 `config/economy.json` 的 `win_streak_guard` 段。该功能默认关闭，金额单位、比例和时长口径请以该段 `_comment` 为准。
 
-- 注册 `/register`（用户名 4-16 位唯一、密保问题、初始赠送自动入账）并自动登录进大厅
-- 登录 `/login`（连续失败 5 次锁定 15 分钟、「记住我」Refresh 30 天）、找回密码 `/forgot-password`（密保问题重置）
-- JWT 双令牌（Access 2h + Refresh 14d，可吊销/轮换）、修改密码、账号注销（级联删除）
-- 管理员重置密码：`node scripts/reset-password.js <用户名> <新密码>`（docs/开发文档.md 3.1.1 方式②）
+## 玩法规则
 
-## TODO（后续阶段补全）
+完整公开规则见 docs/卡牌一掷千金完整官方游戏规则.md。
 
-- [x] 账号系统（M1 账号部分；个人中心、设置、文件上传接口仍待实现）
-- [ ] 对局核心状态机与结算（M2，含 config/tiers.json 数值填充）
-- [ ] 角色、对局页布局与动效、背景音乐（M3）
-- [ ] 签到、任务、破产保护、成就（M4，含 config/economy.json 其余数值填充）
-- [ ] Dockerfile / docker-compose（M5）
-- [ ] 截图、CI、LICENSE、素材授权核查（M6）
+核心流程为选择档位、选定底牌、按轮次翻牌、处理银行家报价与还价，并在最终两张牌阶段选择保留或交换底牌后结算。卡池、报价、税费和结算结果均由服务端权威生成。
+
+## 素材与授权
+
+`assets/bankers`、`assets/music` 和 `assets/placeholders` 中的现有素材全部由 `scripts/generate-placeholders.js` 程序生成，为项目自制占位素材，不包含第三方版权内容。
+
+内置音乐为占位音。替换及扩展方式见 `assets/music/README.md`。
+
+
+## 开源协议
+
+本项目基于 [MIT](LICENSE) 协议开源。

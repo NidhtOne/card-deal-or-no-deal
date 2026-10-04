@@ -1,0 +1,19 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+      - ./storage:/app/storage
+      - ./config:/app/config:ro
+    environment:
+      PORT: ${PORT:-8080}
+      JWT_SECRET: ${JWT_SECRET:-}
+      DATABASE_URL: ${DATABASE_URL:-./data/game.db}
+      STORAGE_DIR: ${STORAGE_DIR:-./storage}
+      USE_REDIS: ${USE_REDIS:-false}
+    restart: unless-stopped
+    # 文档外补充：生产环境推荐显式设置 JWT_SECRET，走 start-prod 守卫分支，
+    # 避免写盘且容器重建后登录态不失效；也可额外挂载持久化 .env 文件。
+    # Dockerfile 已定义 healthcheck，此处直接沿用。

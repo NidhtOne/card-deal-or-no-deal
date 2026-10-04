@@ -24,5 +24,6 @@ coverage/
 # Playwright E2E 产物（M5 阶段 7，test-results/ 与报告不入库）
 web/test-results/
 web/playwright-report/
+/docs/*
+!/docs/卡牌一掷千金完整官方游戏规则.md
 /DOCS/
-/docs/

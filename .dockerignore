@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+.git
+data
+storage
+.env
+docs
+**/coverage
+**/test-results
+**/playwright-report
+**/*.db*
+web/e2e
+**/*.spec.ts
