@@ -41,41 +41,104 @@
 - 翻牌、报价、成交、拒绝、揭晓与结算音效
 - 支持替换或扩展本地音乐资源
 
-## 快速开始
+## 部署指南
 
-### Docker
+### 前置要求
+
+| 部署方式 | 依赖                                          |
+| -------- | --------------------------------------------- |
+| Docker   | Docker Engine 20+（含 `docker compose` 插件） |
+| 裸机     | Node.js ≥ 20（`node -v` 确认），npm 10+       |
+
+获取代码并进入目录：
 
 ```bash
-docker compose up -d
+git clone https://github.com/NidhtOne/card-deal-or-no-deal.git
+cd card-deal-or-no-deal
 ```
 
-访问：<http://localhost:8080>
+### 方式一：Docker 部署（推荐）
 
-生产部署建议在环境中显式设置稳定的 `JWT_SECRET`，这样会跳过 `.env` 初始化和写盘，并避免容器重建后重新生成密钥导致既有登录态失效。也可以为容器挂载持久化 `.env` 文件。
+```bash
+docker compose up -d --build
+```
 
-### 裸机
+1. 首次启动会自动安装依赖、构建前后端，并执行数据库迁移；
+2. 启动完成后访问 <http://localhost:8080>；
+3. 注册任意账号即可开始游戏，新账号自动获得初始虚拟资金。
+
+数据持久化：宿主机 `./data`（SQLite 数据库）、`./storage`（用户上传文件）、`./config`（游戏数值配置，只读挂载）。删除容器不丢数据，除非删除这三个目录。
+
+生产环境建议在环境或 `.env` 中显式设置稳定的 `JWT_SECRET`，这样会跳过 `.env` 初始化和写盘，并避免容器重建后重新生成密钥导致既有登录态失效。也可以为容器挂载持久化 `.env` 文件。
+
+常用运维命令：
+
+```bash
+docker compose logs -f          # 跟踪日志
+docker compose restart          # 重启服务
+docker compose down             # 停止并移除容器（数据保留）
+docker compose up -d --build    # 改代码或改配置后重建升级
+```
+
+### 方式二：裸机部署
 
 需要 Node.js 20：
 
 ```bash
-npm install
-npm run build
-npm start
+npm install          # 安装依赖（npm workspaces：server + web）
+npm run build        # 构建服务端 dist 与前端产物
+npm start            # 生产启动
 ```
 
-生产入口会在缺少 `.env` 或 `JWT_SECRET` 为空时自动初始化本地 `.env`，然后启动服务。
+行为说明：
+
+- 生产入口会在缺少 `.env` 或 `JWT_SECRET` 为空时自动初始化本地 `.env`（生成随机密钥），然后启动服务；
+- 首次启动自动创建 `data/`、`storage/` 目录并执行数据库迁移，无需手工建库；
+- 生产环境建议先复制 `.env.example` 为 `.env` 并固定 `JWT_SECRET`，避免重启后登录态失效；也可用 systemd 等进程管理器将 `npm start` 托管为服务。
+
+### 开发模式
+
+```bash
+npm run dev
+```
+
+同时启动后端（NestJS watch）与前端（Vite，<http://localhost:5173>，已代理 `/api`、`/assets`、`/uploads`、`/ws` 到后端端口）。首次运行会自动初始化 `.env`。
+
+### 升级与验证
+
+```bash
+# Docker
+git pull && docker compose up -d --build
+
+# 裸机
+git pull && npm install && npm run build && npm start
+```
+
+升级只替换代码，`data/` 与 `storage/` 中的用户数据保持不变；数据库迁移在启动时自动执行。
+
+健康检查（Docker 镜像内置同款探针）：
+
+```bash
+curl http://localhost:8080/api/health
+```
+
+忘记密码时可在服务器上执行（数据库路径读取 `.env` 的 `DATABASE_URL`）：
+
+```bash
+node scripts/reset-password.js <用户名> <新密码>
+```
 
 ## 配置说明
 
 ### 环境变量
 
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `PORT` | `8080` | 服务监听端口 |
-| `JWT_SECRET` | 空 | JWT 密钥；空值时首次启动自动生成 |
-| `DATABASE_URL` | `./data/game.db` | SQLite 数据库路径 |
-| `STORAGE_DIR` | `./storage` | 用户上传文件目录 |
-| `USE_REDIS` | `false` | 是否启用 Redis |
+| 变量           | 默认值           | 说明                             |
+| -------------- | ---------------- | -------------------------------- |
+| `PORT`         | `8080`           | 服务监听端口                     |
+| `JWT_SECRET`   | 空               | JWT 密钥；空值时首次启动自动生成 |
+| `DATABASE_URL` | `./data/game.db` | SQLite 数据库路径                |
+| `STORAGE_DIR`  | `./storage`      | 用户上传文件目录                 |
+| `USE_REDIS`    | `false`          | 是否启用 Redis                   |
 
 完整样例见 `.env.example`。真实密钥只能保存在 `.env` 或部署环境变量中，不得提交到仓库。
 
@@ -96,7 +159,6 @@ npm start
 `assets/bankers`、`assets/music` 和 `assets/placeholders` 中的现有素材全部由 `scripts/generate-placeholders.js` 程序生成，为项目自制占位素材，不包含第三方版权内容。
 
 内置音乐为占位音。替换及扩展方式见 `assets/music/README.md`。
-
 
 ## 开源协议
 
